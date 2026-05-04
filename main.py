@@ -1,84 +1,139 @@
-from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
 import asyncio
 import json
 
-from langchain_core.runnables import RunnableConfig
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
+from langgraph.types import Command
 
 from agent import build_graph
-from langchain_core.messages import BaseMessage
+from schemas import ChatRequest, ResumeRequest
+from session import session_manager
+from utils.sse import sse
 
-app = FastAPI()
-agent = build_graph()
+app = FastAPI(title="AI Coding Agent")
 
-def sse(event: str, data: dict):
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.post("/api/chat/stream")
-async def chat_stream(data: dict):
-    prompt = data.get("prompt", "")
-    project_context = data.get("context", {})
-    thread_id = data.get("thread_id", "default_thread")
-    tool_result = data.get("tool_result", None)
+graph = build_graph()
 
-    print("\n" + "="*50)
-    print(f"🟢 用户指令：{prompt}")
-    print(f"🟢 会话ID：{thread_id}")
-    print("="*50 + "\n")
 
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+async def stream_graph(input_data, config: dict):
+    """共享的 SSE 流生成器，供 chat/stream 和 chat/resume 使用。"""
+    try:
+        async for chunk in graph.astream(
+            input_data,
+            stream_mode=["messages", "updates"],
+            config=config,
+            version="v2",
+        ):
+            typ = chunk.get("type")
+            data = chunk.get("data")
 
-    async def generate():
-        try:
-            async for chunk in agent.astream(
-                input={
-                    "messages": [{"role": "user", "content": prompt}],
-                    "user_prompt": prompt,
-                    "project_context": project_context,
-                    "tool_result": tool_result,
-                    "thread_id": thread_id,
-                },
-                stream_mode=["messages", "updates"],
-                thread_id=thread_id,
-                version="v2",
-                config=config
-            ):
-                # ✅ 修复1：删除错误的元组解包，正确处理消息
-                if chunk["type"] == "messages":
-                    message,metadata = chunk["data"]
-                    # 只处理文本消息，跳过工具消息
-                    print(f"🟢 输出：{message}")
-                    print(f"🟢 元数据：{metadata}")
+            if typ == "messages":
+                msg, metadata = data
+                node = metadata.get("langgraph_node", "")
 
-                    yield sse("text", {"chunk": message.content})
+                if node == "think" and msg.content:
+                    yield sse("text", {"chunk": msg.content})
                     await asyncio.sleep(0.01)
 
-                # ✅ 修复2：正确获取工具调用指令
-                if chunk["type"] == "updates":
-                    print("==================================================================")
-                    print(chunk)
-                    print("==================================================================")
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        if tc.get("name") and tc.get("args"):
+                            yield sse("tool_call", {
+                                "tool_name": tc["name"],
+                                "tool_call_id": tc["id"],
+                                "args": tc["args"],
+                            })
 
-                    # 修复并取消注释这里的代码
-                    state_data = chunk["data"]
-                    # LangGraph 的 updates 结构是 {"节点名": {"状态变量": "值"}}
-                    if "call_tool" in state_data and state_data["call_tool"].get("tool_call"):
-                        tool_call = state_data["call_tool"]["tool_call"]
-                        print(f" 发送工具调用: {tool_call}")
-                        yield sse("action", tool_call)
+                if isinstance(msg, ToolMessage) and node == "execute_tools":
+                    yield sse("tool_result", {
+                        "tool_call_id": msg.tool_call_id,
+                        "result": msg.content,
+                    })
 
-            yield sse("done", {"status": "ok"})
+            elif typ == "updates":
+                if "__interrupt__" in data:
+                    for intr in data["__interrupt__"]:
+                        yield sse("approval_required", intr.value)
 
-        except Exception as e:
-            print(f"🔴 后端错误：{str(e)}")
-            yield sse("text", {"chunk": f"错误：{str(e)}"})
-            yield sse("done", {"status": "error"})
+        yield sse("done", {"status": "ok"})
+
+    except Exception as e:
+        yield sse("error", {"message": str(e)})
+        yield sse("done", {"status": "error"})
+
+
+# ─── POST /api/chat/stream ───
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    config = {"configurable": {"thread_id": req.thread_id}}
+    session_manager.create_or_update(
+        req.thread_id, req.project_root, title=req.prompt[:50]
+    )
+
+    input_data = {
+        "messages": [HumanMessage(content=req.prompt)],
+        "project_root": req.project_root,
+    }
 
     return StreamingResponse(
-        generate(),
+        stream_graph(input_data, config),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache"}
     )
+
+
+# ─── POST /api/chat/resume ───
+
+@app.post("/api/chat/resume")
+async def chat_resume(req: ResumeRequest):
+    session = session_manager.get_session(req.thread_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    config = {"configurable": {"thread_id": req.thread_id}}
+    session_manager.create_or_update(req.thread_id, session["project_root"])
+
+    return StreamingResponse(
+        stream_graph(Command(resume=req.approval), config),
+        media_type="text/event-stream",
+    )
+
+
+# ─── GET /api/sessions ───
+
+@app.get("/api/sessions")
+async def list_sessions():
+    return session_manager.list_sessions()
+
+
+# ─── DELETE /api/sessions/{thread_id} ───
+
+@app.delete("/api/sessions/{thread_id}")
+async def delete_session(thread_id: str):
+    if not session_manager.delete_session(thread_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"status": "ok"}
+
+
+# ─── GET /api/sessions/{thread_id}/history ───
+
+@app.get("/api/sessions/{thread_id}/history")
+async def get_history(thread_id: str):
+    session = session_manager.get_session(thread_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session_manager.get_history(thread_id, graph)
+
 
 if __name__ == "__main__":
     import uvicorn
