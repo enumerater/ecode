@@ -41,10 +41,12 @@ async def stream_graph(input_data, config: dict):
                 msg, metadata = data
                 node = metadata.get("langgraph_node", "")
 
+                # AI 文本响应
                 if node == "think" and msg.content:
                     yield sse("text", {"chunk": msg.content})
                     await asyncio.sleep(0.01)
 
+                # 工具调用请求
                 if hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tc in msg.tool_calls:
                         if tc.get("name") and tc.get("args"):
@@ -54,6 +56,7 @@ async def stream_graph(input_data, config: dict):
                                 "args": tc["args"],
                             })
 
+                # 工具执行结果
                 if isinstance(msg, ToolMessage) and node == "execute_tools":
                     yield sse("tool_result", {
                         "tool_call_id": msg.tool_call_id,
@@ -61,6 +64,7 @@ async def stream_graph(input_data, config: dict):
                     })
 
             elif typ == "updates":
+                # 中断（需要审批）
                 if "__interrupt__" in data:
                     for intr in data["__interrupt__"]:
                         yield sse("approval_required", intr.value)

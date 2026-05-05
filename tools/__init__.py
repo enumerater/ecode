@@ -1,12 +1,12 @@
 from pathlib import Path
 
-from tools.file_tools import view_file, edit_file, create_file
+from tools.file_tools import view_file, edit_file, write_file, create_file, create_directory
 from tools.search_tools import search_code, list_files
 from tools.command_tools import run_command
 
 SAFE_TOOLS = {"view_file", "search_code", "list_files"}
-DANGEROUS_TOOLS = {"edit_file", "create_file", "run_command"}
-ALL_TOOLS = [view_file, edit_file, create_file, search_code, list_files, run_command]
+DANGEROUS_TOOLS = {"edit_file", "write_file", "create_file", "create_directory", "run_command"}
+ALL_TOOLS = [view_file, edit_file, write_file, create_file, create_directory, search_code, list_files, run_command]
 
 _project_root: str = "."
 
