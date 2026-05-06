@@ -150,7 +150,7 @@ export function showHelp() {
 }
 
 export function formatText(data) {
-    if (data?.chunk) process.stdout.write(data.chunk);
+    if (data?.chunk) process.stdout.write(String(data.chunk));
 }
 
 export function formatToolCall(data) {
@@ -186,6 +186,10 @@ export function formatToolResult(data) {
         }
     } else if (data?.result && typeof data.result === 'object') {
         parsed = data.result;
+    } else if (data?.result != null) {
+        // result is a primitive (number, boolean, etc.) — show as string
+        console.log(pc.gray(`  ${String(data.result).slice(0, 300)}`));
+        return;
     }
 
     console.log(formatResultDetail(toolName, parsed));

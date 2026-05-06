@@ -160,6 +160,15 @@ def handle_error(state: State) -> dict:
 
     # 有错误时增加重试计数
     retry = state.get("retry_count", 0) + 1
+
+    # 重试次数耗尽，返回一条消息告知用户而不是静默结束
+    if retry > MAX_RETRIES:
+        return {
+            "last_error": last_error,
+            "retry_count": retry,
+            "messages": [AIMessage(content=f"抱歉，连续多次工具调用失败（最近的错误: {last_error}），已停止重试。请检查问题后重试。")],
+        }
+
     return {"last_error": last_error, "retry_count": retry}
 
 

@@ -43,9 +43,19 @@ async def stream_graph(input_data, config: dict):
                 msg, metadata = data
                 node = metadata.get("langgraph_node", "")
 
+                # 提取文本内容（streaming 时 content 可能是 list）
+                content = msg.content
+                if isinstance(content, list):
+                    content = "".join(
+                        block.get("text", "") if isinstance(block, dict) else str(block)
+                        for block in content
+                    )
+                if not isinstance(content, str):
+                    content = str(content) if content else ""
+
                 # AI 文本响应
-                if node == "think" and msg.content:
-                    yield sse("text", {"chunk": msg.content})
+                if node == "think" and content:
+                    yield sse("text", {"chunk": content})
                     await asyncio.sleep(0.01)
 
                 # 流式 token 用量（streaming usage metadata）
@@ -57,15 +67,20 @@ async def stream_graph(input_data, config: dict):
                         "total_tokens": um.get("total_tokens", 0),
                     }
 
-                # 工具调用请求
-                if hasattr(msg, "tool_calls") and msg.tool_calls:
-                    for tc in msg.tool_calls:
-                        if tc.get("name") and tc.get("args"):
-                            yield sse("tool_call", {
-                                "tool_name": tc["name"],
-                                "tool_call_id": tc["id"],
-                                "args": tc["args"],
-                            })
+                # 工具调用请求（streaming chunks 用 tool_call_chunks，完整消息用 tool_calls）
+                tool_calls = []
+                if hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:
+                    tool_calls = msg.tool_call_chunks
+                elif hasattr(msg, "tool_calls") and msg.tool_calls:
+                    tool_calls = msg.tool_calls
+
+                for tc in tool_calls:
+                    if tc.get("name") and tc.get("args"):
+                        yield sse("tool_call", {
+                            "tool_name": tc["name"],
+                            "tool_call_id": tc["id"],
+                            "args": tc["args"],
+                        })
 
                 # 工具执行结果
                 if isinstance(msg, ToolMessage) and node == "execute_tools":
