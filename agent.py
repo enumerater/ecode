@@ -69,6 +69,7 @@ class State(TypedDict):
     project_root: str
     last_error: str
     retry_count: int
+    usage: dict  # {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}
 
 
 def think(state: State) -> dict:
@@ -76,7 +77,18 @@ def think(state: State) -> dict:
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(project_root=project_root)
     messages = [SystemMessage(content=system_prompt)] + state["messages"]
     response = tool_llm.invoke(messages)
-    return {"messages": [response]}
+
+    # 累积 token 用量
+    usage = state.get("usage") or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    if hasattr(response, "usage_metadata") and response.usage_metadata:
+        um = response.usage_metadata
+        usage = {
+            "prompt_tokens": usage["prompt_tokens"] + um.get("input_tokens", 0),
+            "completion_tokens": usage["completion_tokens"] + um.get("output_tokens", 0),
+            "total_tokens": usage["total_tokens"] + um.get("total_tokens", 0),
+        }
+
+    return {"messages": [response], "usage": usage}
 
 
 def execute_tools(state: State) -> dict:
@@ -186,4 +198,4 @@ def build_graph():
         END: END,
     })
 
-    return g.compile(checkpointer=checkpointer)
+    return g.compile(checkpointer=checkpointer,debug= True)

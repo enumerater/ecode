@@ -21,6 +21,7 @@ llm = ChatOpenAI(
     api_key=MIMO,
     base_url="https://token-plan-cn.xiaomimimo.com/v1",
     streaming=True,
+    stream_usage=True,
 )
 
 if __name__ == "__main__":

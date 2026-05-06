@@ -28,6 +28,8 @@ graph = build_graph()
 async def stream_graph(input_data, config: dict):
     """共享的 SSE 流生成器，供 chat/stream 和 chat/resume 使用。"""
     try:
+        accumulated_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
         async for chunk in graph.astream(
             input_data,
             stream_mode=["messages", "updates"],
@@ -45,6 +47,15 @@ async def stream_graph(input_data, config: dict):
                 if node == "think" and msg.content:
                     yield sse("text", {"chunk": msg.content})
                     await asyncio.sleep(0.01)
+
+                # 流式 token 用量（streaming usage metadata）
+                if node == "think" and hasattr(msg, "usage_metadata") and msg.usage_metadata:
+                    um = msg.usage_metadata
+                    accumulated_usage = {
+                        "prompt_tokens": um.get("input_tokens", 0),
+                        "completion_tokens": um.get("output_tokens", 0),
+                        "total_tokens": um.get("total_tokens", 0),
+                    }
 
                 # 工具调用请求
                 if hasattr(msg, "tool_calls") and msg.tool_calls:
@@ -69,6 +80,14 @@ async def stream_graph(input_data, config: dict):
                     for intr in data["__interrupt__"]:
                         yield sse("approval_required", intr.value)
 
+                # 从节点更新中提取累积 usage（think 节点返回的最终值）
+                if isinstance(data, dict):
+                    for _node_name, node_output in data.items():
+                        if isinstance(node_output, dict) and "usage" in node_output:
+                            accumulated_usage = node_output["usage"]
+
+        # 在 done 之前发送 token 用量
+        yield sse("usage", accumulated_usage)
         yield sse("done", {"status": "ok"})
 
     except Exception as e:
