@@ -10,7 +10,7 @@ export function chatStream(config, { prompt, projectRoot, threadId }) {
             thread_id: threadId
         },
         responseType: 'stream',
-        timeout: config.backend.timeout || 60000
+        timeout: 600000
     });
 }
 
@@ -23,7 +23,8 @@ export function resumeStream(config, { threadId, approval }) {
             approval
         },
         responseType: 'stream',
-        timeout: config.backend.timeout || 60000
+        // 审批后恢复需要更长超时：工具执行(command最长300s) + LLM推理
+        timeout: 600000
     });
 }
 
