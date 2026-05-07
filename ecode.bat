@@ -1,17 +1,20 @@
 @echo off
-REM 记住你当前打开终端的位置
-set "OPEN_DIR=%cd%"
+setlocal
 
-REM 强制进入你的 Python 项目根目录！关键！
-cd /d "E:\work\ecode_back"
+:: 保存用户当前目录
+set "USER_CWD=%cd%"
 
-REM 激活 conda 环境
-call D:\Anaconda\Scripts\activate.bat D:\Anaconda\envs\clawclaw
+:: 你的固定项目目录
+set "AGENT_DIR=E:\work\ecode_back"
 
-REM 运行助手（现在目录正确，一定能找到 cli）
-python -m cli.chat
+:: 进入项目加载模块
+cd /d "%AGENT_DIR%" 2>nul
 
-REM 结束后回到你原来的目录
-cd /d "%OPEN_DIR%"
+:: 切回真实工作目录（核心！）
+cd /d "%USER_CWD%"
 
-pause
+:: 🔥 关键：用 conda 环境的 Python 直接运行（彻底无弹窗）
+"D:\Anaconda\envs\clawclaw\python.exe" -m cli.chat
+
+:: 直接退出，不等待！
+exit /b

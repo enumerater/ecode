@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 ARCHITECTURE.md
 CLAUDE.md
+ecode.egg-info
