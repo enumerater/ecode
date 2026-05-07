@@ -1,4 +1,3 @@
-import sys
 import json
 from datetime import datetime, timezone
 from rich.console import Console
@@ -167,8 +166,7 @@ def show_help():
 def format_text(data):
     chunk = data.get("chunk", "")
     if chunk:
-        sys.stdout.write(str(chunk))
-        sys.stdout.flush()
+        console.print(str(chunk), end="", highlight=False)
 
 
 def format_tool_call(data):

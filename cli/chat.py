@@ -39,10 +39,14 @@ def _process_stream(input_data, config, thread_id, project_root):
         config=config,
         version="v2",
     ):
-        # 安全解包
-        if not isinstance(chunk, (list, tuple)) or len(chunk) < 2:
+        # graph.stream(version="v2") 返回 dict: {"type": ..., "ns": ..., "data": ...}
+        if isinstance(chunk, dict):
+            typ = chunk.get("type", "")
+            data = chunk.get("data")
+        elif isinstance(chunk, (list, tuple)) and len(chunk) >= 2:
+            typ, data = chunk
+        else:
             continue
-        typ, data = chunk
 
         # ==============================================
         # 【修复 1】处理 updates：这里才有真正的消息和用量
