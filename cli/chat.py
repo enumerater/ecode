@@ -7,7 +7,7 @@ from langgraph.types import Command
 
 from agent import build_graph
 from session import session_manager
-from .interactions import prompt_input, select_one, confirm
+from .interactions import prompt_input, select_one, confirm, setup_readline, set_slash_commands
 from .display import (
     show_banner, show_session_info, show_help,
     format_text, format_tool_call, format_tool_result,
@@ -205,6 +205,10 @@ def cmd_history(thread_id):
 
 
 def start_chat():
+    # 初始化 readline 历史和 Tab 补全
+    setup_readline()
+    set_slash_commands(["help", "sessions", "switch", "new", "delete", "history", "clear", "exit"])
+
     show_banner()
 
     thread_id = str(uuid.uuid4())
@@ -275,6 +279,7 @@ def start_chat():
 
 def main():
     start_chat()
+
 
 
 if __name__ == "__main__":

@@ -1,44 +1,71 @@
-"""prompt_toolkit 交互组件：带历史的输入、单选、多选、确认、多行输入。"""
+"""交互组件：readline 历史、单选菜单、多选菜单、确认对话。"""
 import os
 import sys
-from prompt_toolkit import PromptSession
-from prompt_toolkit.history import FileHistory
-from prompt_toolkit.formatted_text import HTML
-from prompt_toolkit.styles import Style
+import atexit
 
+# ── ANSI 色码 ──────────────────────────────────────────────────────────────
+C = {
+    "cyan":    "\033[36m",
+    "green":   "\033[32m",
+    "yellow":  "\033[33m",
+    "red":     "\033[31m",
+    "bold":    "\033[1m",
+    "dim":     "\033[2m",
+    "reset":   "\033[0m",
+}
+
+def clr(text, *keys):
+    return "".join(C[k] for k in keys) + str(text) + C["reset"]
+
+
+# ── readline 历史设置 ──────────────────────────────────────────────────────
 HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".ecode_history")
+_HISTORY_MAX = 1000
 
-_style = Style.from_dict({
-    "prompt": "cyan",
-})
+def setup_readline():
+    """初始化 readline：加载历史、设置长度、注册退出时保存。"""
+    try:
+        import readline as _rl
+        try:
+            _rl.read_history_file(HISTORY_FILE)
+        except FileNotFoundError:
+            pass
+        _rl.set_history_length(_HISTORY_MAX)
+        atexit.register(_rl.write_history_file, HISTORY_FILE)
+    except ImportError:
+        # Windows 没有 readline 也没 pyreadline3，跳过
+        pass
 
-# Lazy singleton prompt session
-_session = None
+# 斜杠命令补全列表（在 chat.py 中注册）
+_slash_commands: list[str] = []
+
+def set_slash_commands(cmds: list[str]):
+    global _slash_commands
+    _slash_commands = [f"/{c}" for c in cmds]
+    try:
+        import readline as _rl
+        def _completer(text, state):
+            matches = [c for c in _slash_commands if c.startswith(text)]
+            return matches[state] if state < len(matches) else None
+        _rl.set_completer(_completer)
+        _rl.parse_and_bind("tab: complete")
+    except ImportError:
+        pass
 
 
-def _get_session():
-    global _session
-    if _session is None:
-        _session = PromptSession(history=FileHistory(HISTORY_FILE))
-    return _session
-
+# ── 带历史的输入 ──────────────────────────────────────────────────────────
 
 def prompt_input(message=">"):
-    """带历史记录的单行输入。上/下箭头翻历史，Ctrl+R 搜索历史。"""
+    """带历史记录的单行输入。上/下箭头翻历史，Tab 补全斜杠命令。"""
+    cwd_short = os.path.basename(os.getcwd())
+    prompt = clr(f"\n[{cwd_short}] ", "dim") + clr(f"{message} ", "cyan", "bold")
     try:
-        session = _get_session()
-        return session.prompt(HTML(f"<prompt>{message} </prompt>"), style=_style)
+        return input(prompt)
     except (EOFError, KeyboardInterrupt):
         return None
-    except Exception:
-        # Fallback for terminals that don't support prompt_toolkit
-        try:
-            sys.stdout.write(f"{message} ")
-            sys.stdout.flush()
-            return input()
-        except (EOFError, KeyboardInterrupt):
-            return None
 
+
+# ── 单选菜单 ──────────────────────────────────────────────────────────────
 
 def select_one(options, message="选择："):
     """单选菜单。上下箭头移动，Enter 确认，Esc/Ctrl+C 取消。
@@ -56,16 +83,17 @@ def select_one(options, message="选择："):
 
     def _render():
         nonlocal rendered_lines
+        # 清除上次渲染
         for _ in range(rendered_lines):
             sys.stdout.write("\033[A\033[K")
         lines = []
-        lines.append(f"\033[1m{message}\033[0m")
+        lines.append(clr(message, "bold"))
         for i, opt in enumerate(options):
             if i == idx:
-                lines.append(f"  \033[36m▶\033[0m \033[1m{opt['label']}\033[0m")
+                lines.append(f"  {clr('▶', 'cyan')} {clr(opt['label'], 'bold')}")
             else:
-                lines.append(f"    \033[2m{opt['label']}\033[0m")
-        lines.append("  \033[2m↑↓ 移动  Enter 确认  Esc 取消\033[0m")
+                lines.append(f"    {clr(opt['label'], 'dim')}")
+        lines.append(clr("  ↑↓ 移动  Enter 确认  Esc 取消", "dim"))
         sys.stdout.write("\n".join(lines) + "\n")
         sys.stdout.flush()
         rendered_lines = len(lines)
@@ -74,11 +102,11 @@ def select_one(options, message="选择："):
 
     while True:
         key = msvcrt.getch()
-        if key == b'\xe0':  # Arrow key prefix on Windows
+        if key == b'\xe0':  # Windows 方向键前缀
             key2 = msvcrt.getch()
-            if key2 == b'H':  # Up
+            if key2 == b'H':  # 上
                 idx = (idx - 1) % len(options)
-            elif key2 == b'P':  # Down
+            elif key2 == b'P':  # 下
                 idx = (idx + 1) % len(options)
             _render()
         elif key == b'\r':  # Enter
@@ -92,6 +120,8 @@ def select_one(options, message="选择："):
             sys.stdout.flush()
             return None
 
+
+# ── 多选菜单 ──────────────────────────────────────────────────────────────
 
 def select_multi(options, message="选择（空格切换，Enter 确认）："):
     """多选菜单。上下箭头移动，空格切换选中，Enter 确认。
@@ -113,14 +143,14 @@ def select_multi(options, message="选择（空格切换，Enter 确认）："):
         for _ in range(rendered_lines):
             sys.stdout.write("\033[A\033[K")
         lines = []
-        lines.append(f"\033[1m{message}\033[0m")
+        lines.append(clr(message, "bold"))
         for i, opt in enumerate(options):
-            mark = "\033[32m✓\033[0m" if opt["value"] in checked else "\033[2m○\033[0m"
+            mark = clr("✓", "green") if opt["value"] in checked else clr("○", "dim")
             if i == idx:
-                lines.append(f"  \033[36m▶\033[0m {mark} \033[1m{opt['label']}\033[0m")
+                lines.append(f"  {clr('▶', 'cyan')} {mark} {clr(opt['label'], 'bold')}")
             else:
                 lines.append(f"    {mark} {opt['label']}")
-        lines.append("  \033[2m↑↓ 移动  空格切换  Enter 确认  Esc 取消\033[0m")
+        lines.append(clr("  ↑↓ 移动  空格切换  Enter 确认  Esc 取消", "dim"))
         sys.stdout.write("\n".join(lines) + "\n")
         sys.stdout.flush()
         rendered_lines = len(lines)
@@ -136,7 +166,7 @@ def select_multi(options, message="选择（空格切换，Enter 确认）："):
             elif key2 == b'P':
                 idx = (idx + 1) % len(options)
             _render()
-        elif key == b' ':  # Space to toggle
+        elif key == b' ':  # 空格切换
             val = options[idx]["value"]
             if val in checked:
                 checked.discard(val)
@@ -155,49 +185,29 @@ def select_multi(options, message="选择（空格切换，Enter 确认）："):
             return []
 
 
+# ── 确认对话 ──────────────────────────────────────────────────────────────
+
 def confirm(message="确认？", default=True):
     """确认对话。y/n 输入，Enter 使用默认值。"""
-    hint = "[Y/n]" if default else "[y/N]"
+    hint = clr("[Y/n]", "dim") if default else clr("[y/N]", "dim")
     try:
-        session = _get_session()
-        answer = session.prompt(
-            HTML(f"<prompt>{message} {hint} </prompt>"),
-            style=_style,
-        ).strip().lower()
+        ans = input(clr(f"  {message} ", "yellow") + hint + " ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         return False
-    except Exception:
-        try:
-            sys.stdout.write(f"{message} {hint} ")
-            sys.stdout.flush()
-            answer = input().strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            return False
-    if not answer:
+    if not ans:
         return default
-    return answer in ("y", "yes", "是", "true", "1")
+    return ans in ("y", "yes", "是", "true", "1")
 
+
+# ── 多行文本输入 ──────────────────────────────────────────────────────────
 
 def text_input(message="输入内容（输入 END 结束）："):
     """多行文本输入。每行输入，单独输入 END 结束。"""
-    from rich.console import Console
-    console = Console()
-    console.print(f"[dim]{message}[/dim]")
+    print(clr(message, "dim"))
     lines = []
-    try:
-        session = _get_session()
-        use_prompt_toolkit = True
-    except Exception:
-        use_prompt_toolkit = False
-
     while True:
         try:
-            if use_prompt_toolkit:
-                line = session.prompt(HTML("<prompt>  </prompt>"), style=_style)
-            else:
-                sys.stdout.write("  ")
-                sys.stdout.flush()
-                line = input()
+            line = input(clr("  ", "dim"))
         except (EOFError, KeyboardInterrupt):
             return None
         if line.strip().upper() == "END":
