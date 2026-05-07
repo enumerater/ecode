@@ -6,7 +6,7 @@ import uuid
 
 from rich.console import Console
 from rich.panel import Panel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 from langgraph.types import Command
 
 from agent import build_graph
@@ -69,6 +69,9 @@ def _process_stream(input_data, config, thread_id, project_root):
                 # ✅ 提取 AI 回复（从 think 节点的 messages）
                 if "messages" in node_data:
                     for msg in node_data["messages"]:
+                        # 工具结果由 messages 流处理，跳过
+                        if isinstance(msg, ToolMessage):
+                            continue
                         if hasattr(msg, "content") and msg.content:
                             content = msg.content
                             if isinstance(content, list):
@@ -90,8 +93,27 @@ def _process_stream(input_data, config, thread_id, project_root):
             try:
                 msg, metadata = data
                 node = metadata.get("langgraph_node", "")
-                content = msg.content
 
+                # 工具结果：格式化展示，不输出原始 JSON
+                if isinstance(msg, ToolMessage):
+                    tool_name = getattr(msg, "name", "") or ""
+                    format_tool_result({
+                        "tool_call_id": msg.tool_call_id,
+                        "result": msg.content,
+                        "_tool_name": tool_name,
+                    })
+                    continue
+
+                # AI 消息：注册工具调用映射，输出文本
+                if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+                    for tc in msg["tool_calls"]:
+                        format_tool_call({
+                            "tool_name": tc.get("name", ""),
+                            "tool_call_id": tc.get("id"),
+                            "args": tc.get("args"),
+                        })
+
+                content = msg.content
                 if isinstance(content, list):
                     content = "".join(
                         block.get("text", "") if isinstance(block, dict) else str(block)
@@ -112,8 +134,15 @@ def _handle_approval(interrupt_data, config, thread_id, project_root):
     from .approval import show_approval_details
     show_approval_details(interrupt_data)
 
-    approved = confirm("允许执行此操作？", default=True)
-    approval_str = "approved" if approved else "rejected"
+    choice = select_one(
+        [
+            {"value": "approved", "label": "允许执行"},
+            {"value": "rejected", "label": "拒绝"},
+        ],
+        message="是否允许此操作？",
+    )
+    approved = choice == "approved"
+    approval_str = choice or "rejected"
     console.print(f"  [dim]{'已批准' if approved else '已拒绝'}，继续...[/dim]")
 
     # 递归处理流（可能再次中断）

@@ -183,6 +183,8 @@ def format_tool_call(data):
 def format_tool_result(data):
     tool_call_id = data.get("tool_call_id")
     tool_name = _tool_call_map.pop(tool_call_id, "") if tool_call_id else ""
+    if not tool_name:
+        tool_name = data.get("_tool_name", "")
 
     result = data.get("result")
     if isinstance(result, str):
