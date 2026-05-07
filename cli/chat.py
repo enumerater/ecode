@@ -39,73 +39,62 @@ def _process_stream(input_data, config, thread_id, project_root):
         config=config,
         version="v2",
     ):
-        typ = chunk.get("type")
-        data = chunk.get("data")
+        # 安全解包
+        if not isinstance(chunk, (list, tuple)) or len(chunk) < 2:
+            continue
+        typ, data = chunk
 
-        if typ == "messages":
-            msg, metadata = data
-            node = metadata.get("langgraph_node", "")
+        # ==============================================
+        # 【修复 1】处理 updates：这里才有真正的消息和用量
+        # ==============================================
+        if typ == "updates" and isinstance(data, dict):
+            # 中断处理
+            if "__interrupt__" in data:
+                for intr in data["__interrupt__"]:
+                    return accumulated_usage, intr.value
 
-            # 提取文本内容
-            content = msg.content
-            if isinstance(content, list):
-                content = "".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block)
-                    for block in content
-                )
-            if not isinstance(content, str):
-                content = str(content) if content else ""
+            # 遍历节点更新（think 节点在这里）
+            for node_name, node_data in data.items():
+                if not isinstance(node_data, dict):
+                    continue
 
-            # AI 文本响应
-            if node == "think" and content:
-                format_text({"chunk": content})
+                # ✅ 提取 AI 回复（从 think 节点的 messages）
+                if "messages" in node_data:
+                    for msg in node_data["messages"]:
+                        if hasattr(msg, "content") and msg.content:
+                            content = msg.content
+                            if isinstance(content, list):
+                                content = "".join(
+                                    block.get("text", "") if isinstance(block, dict) else str(block)
+                                    for block in content
+                                )
+                            # 直接输出文本
+                            format_text({"chunk": content})
 
-            # 流式 token 用量
-            if node == "think" and hasattr(msg, "usage_metadata") and msg.usage_metadata:
-                um = msg.usage_metadata
-                accumulated_usage = {
-                    "prompt_tokens": um.get("input_tokens", 0),
-                    "completion_tokens": um.get("output_tokens", 0),
-                    "total_tokens": um.get("total_tokens", 0),
-                }
+                # ✅ 提取 Token 用量
+                if "usage" in node_data:
+                    accumulated_usage = node_data["usage"]
 
-            # 工具调用请求
-            tool_calls = []
-            if hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:
-                tool_calls = msg.tool_call_chunks
-            elif hasattr(msg, "tool_calls") and msg.tool_calls:
-                tool_calls = msg.tool_calls
+        # ==============================================
+        # 【保留】messages 流（兼容部分模型）
+        # ==============================================
+        elif typ == "messages":
+            try:
+                msg, metadata = data
+                node = metadata.get("langgraph_node", "")
+                content = msg.content
 
-            for tc in tool_calls:
-                if tc.get("name") and tc.get("args"):
-                    format_tool_call({
-                        "tool_name": tc["name"],
-                        "tool_call_id": tc.get("id", ""),
-                        "args": tc["args"],
-                    })
+                if isinstance(content, list):
+                    content = "".join(
+                        block.get("text", "") if isinstance(block, dict) else str(block)
+                        for block in content
+                    )
+                if content and node == "think":
+                    format_text({"chunk": content})
+            except:
+                pass
 
-            # 工具执行结果
-            from langchain_core.messages import ToolMessage
-            if isinstance(msg, ToolMessage) and node == "execute_tools":
-                format_tool_result({
-                    "tool_call_id": msg.tool_call_id,
-                    "result": msg.content,
-                })
-
-        elif typ == "updates":
-            if isinstance(data, dict):
-                # 中断（需要审批）
-                if "__interrupt__" in data:
-                    for intr in data["__interrupt__"]:
-                        # 返回中断信息，让调用方处理审批
-                        return accumulated_usage, intr.value
-
-                # 从节点更新中提取累积 usage
-                for _node_name, node_output in data.items():
-                    if isinstance(node_output, dict) and "usage" in node_output:
-                        accumulated_usage = node_output["usage"]
-
-    # 发送用量
+    # 输出最终用量
     format_usage(accumulated_usage)
     return accumulated_usage, None
 
