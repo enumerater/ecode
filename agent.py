@@ -1,8 +1,9 @@
 import json
+import logging
 from typing import TypedDict, Annotated
 
 from langchain_core.messages import (
-    BaseMessage, AIMessage, ToolMessage, SystemMessage,
+    BaseMessage, AIMessage, ToolMessage, SystemMessage, HumanMessage,
 )
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -11,6 +12,10 @@ from langgraph.types import interrupt
 from model import llm
 from session import checkpointer
 from tools import ALL_TOOLS, DANGEROUS_TOOLS, set_project_root
+from tools.context_tools import COMPACT_SIGNAL
+from context_manager import micro_compact, auto_compact, manual_compact
+
+logger = logging.getLogger(__name__)
 
 
 SYSTEM_PROMPT_TEMPLATE = """\
@@ -54,6 +59,14 @@ SYSTEM_PROMPT_TEMPLATE = """\
 ### 路径规则
 所有路径相对于项目根目录。不要使用绝对路径。
 
+### 上下文管理
+- 当对话变长或切换任务时，调用 compact 工具压缩上下文
+- compact 工具会保留关键信息，释放 token 空间
+- 在以下情况考虑调用 compact：
+  - 切换到一个完全不同的任务
+  - 感觉上下文中有大量不再相关的历史信息
+  - 接连完成多个独立小任务后
+
 ## 沟通
 - 简洁直接，不要废话。
 - 匹配用户语言（中文或英文）。
@@ -70,13 +83,32 @@ class State(TypedDict):
     last_error: str
     retry_count: int
     usage: dict  # {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}
+    compact_summary: str  # 最近一次压缩的摘要文本
+    compact_at: int  # 压缩时的消息数量，用于判断哪些是新消息
 
 
 def think(state: State) -> dict:
     project_root = state.get("project_root", ".")
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(project_root=project_root)
-    messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    response = tool_llm.invoke(messages)
+    messages = list(state["messages"])
+
+    # Layer 3: 如果有 compact_summary，只保留压缩后的摘要 + 新消息
+    compact_summary = state.get("compact_summary")
+    compact_at = state.get("compact_at", 0)
+    if compact_summary and compact_at > 0 and compact_at < len(messages):
+        new_messages = messages[compact_at:]
+        messages = [SystemMessage(content=f"[对话历史摘要]\n{compact_summary}")] + new_messages
+
+    # Layer 1: Micro-Compact — 每轮自动，替换旧工具结果为占位符
+    messages = micro_compact(messages)
+
+    # Layer 2: Auto-Compact — token 超阈值时调用 LLM 生成摘要
+    messages, summary = auto_compact(messages, llm)
+    if summary:
+        logger.info(f"Auto-Compact 摘要: {summary[:100]}...")
+
+    full_messages = [SystemMessage(content=system_prompt)] + messages
+    response = tool_llm.invoke(full_messages)
 
     # 累积 token 用量
     usage = state.get("usage") or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -95,6 +127,8 @@ def execute_tools(state: State) -> dict:
     last = state["messages"][-1]
     tool_map = {t.name: t for t in ALL_TOOLS}
     results = []
+    compact_triggered = False
+    compact_instruction = ""
 
     set_project_root(state.get("project_root", "."))
 
@@ -130,6 +164,17 @@ def execute_tools(state: State) -> dict:
 
         try:
             result = tool_map[tool_name].invoke(tool_args)
+
+            # 检查是否是 compact 工具的信号
+            if tool_name == "compact":
+                try:
+                    signal_data = json.loads(result)
+                    if signal_data.get("signal") == COMPACT_SIGNAL:
+                        compact_triggered = True
+                        compact_instruction = signal_data.get("instruction", "")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
             results.append(ToolMessage(content=result, tool_call_id=tc["id"]))
         except Exception as e:
             results.append(ToolMessage(
@@ -137,7 +182,28 @@ def execute_tools(state: State) -> dict:
                 tool_call_id=tc["id"],
             ))
 
-    return {"messages": results}
+    # Layer 3: 处理 compact 信号 — 生成摘要并存入 state
+    final_update = {"messages": results}
+    if compact_triggered:
+        logger.info("Manual Compact 触发")
+        # 用当前完整消息列表生成摘要
+        all_messages = state["messages"] + results
+        _, summary = manual_compact(all_messages, llm, compact_instruction)
+        if summary:
+            # 记录压缩位置：当前消息总数（后续新消息从这个位置开始）
+            final_update["compact_summary"] = summary
+            final_update["compact_at"] = len(all_messages)
+            # 替换 compact 工具的结果为包含摘要确认的版本
+            results[-1] = ToolMessage(
+                content=json.dumps({
+                    "success": True,
+                    "summary": summary[:200],
+                    "message": f"上下文已压缩。{len(all_messages)} 条历史消息已摘要化。",
+                }, ensure_ascii=False),
+                tool_call_id=results[-1].tool_call_id,
+            )
+
+    return final_update
 
 
 def handle_error(state: State) -> dict:

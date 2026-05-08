@@ -1,0 +1,262 @@
+"""三层上下文压缩管理器。
+
+Layer 1: micro_compact — 每轮自动，替换旧工具结果为占位符
+Layer 2: auto_compact  — token 超阈值时调用 LLM 生成摘要
+Layer 3: Manual compact — Agent 通过 compact 工具主动触发（见 tools/context_tools.py）
+"""
+
+import json
+import copy
+import logging
+from langchain_core.messages import (
+    BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage,
+)
+
+logger = logging.getLogger(__name__)
+
+# ── 配置 ──────────────────────────────────────────────────────────────
+MAX_TOKENS = 60000            # 触发 Auto-Compact 的 token 阈值
+KEEP_RECENT_MESSAGES = 20     # 压缩时保留的最近消息数
+MICRO_COMPACT_AFTER_TURNS = 3  # N 轮前的工具结果触发微压缩
+SUMMARY_MAX_CHARS = 500       # 摘要最大字符数
+
+SUMMARY_PROMPT = """请将以下对话历史压缩为简洁摘要，保留：
+- 用户的核心需求和目标
+- 已完成的关键操作和结果
+- 当前进行中的任务状态
+- 重要的上下文信息（文件路径、变量名等）
+
+丢弃：
+- 详细的工具输出内容
+- 重复的操作记录
+- 不影响后续对话的中间步骤
+
+输出格式：一段连贯的中文摘要，不超过 {max_chars} 字。
+
+{instruction_section}
+
+对话历史：
+{history}"""
+
+
+# ── Token 估算 ────────────────────────────────────────────────────────
+
+def estimate_tokens(messages: list[BaseMessage]) -> int:
+    """基于字符数的轻量 token 估算。"""
+    total = 0
+    for msg in messages:
+        content = msg.content if isinstance(msg.content, str) else str(msg.content)
+        cn_chars = sum(1 for c in content if '一' <= c <= '鿿')
+        other_chars = len(content) - cn_chars
+        total += int(cn_chars * 1.5 + other_chars * 0.25) + 4
+        if hasattr(msg, 'tool_calls') and msg.tool_calls:
+            total += len(msg.tool_calls) * 20
+        if hasattr(msg, 'tool_call_id') and msg.tool_call_id:
+            total += 10
+    return total
+
+
+# ── Layer 1: Micro-Compact ───────────────────────────────────────────
+
+def _make_tool_placeholder(msg: ToolMessage) -> str:
+    """根据工具结果内容生成一行占位符。"""
+    try:
+        data = json.loads(msg.content)
+    except (json.JSONDecodeError, TypeError):
+        return "[工具结果已压缩]"
+
+    success = data.get("success", True)
+    status = "成功" if success else "失败"
+
+    # run_command
+    if "command" in data and "exit_code" in data:
+        cmd = data["command"][:60]
+        return f"[命令已执行: {cmd}, {status}]"
+
+    # search_code
+    if "pattern" in data and "total" in data:
+        pattern = data["pattern"][:40]
+        return f"[搜索完成: {pattern}, 找到 {data['total']} 个匹配]"
+
+    # list_files
+    if "total_files" in data:
+        return f"[文件列表已列出: {data.get('total_files', 0)} 个文件, {data.get('total_dirs', 0)} 个目录]"
+
+    # view_file — 保留原内容，不压缩
+    if "content" in data and "total_lines" in data:
+        return None  # 信号：不替换
+
+    # edit_file / write_file / create_file / create_directory
+    if "path" in data:
+        path = data["path"]
+        if "lines_removed" in data or "lines_added" in data:
+            return f"[文件已修改: {path}]"
+        if "bytes_written" in data:
+            return f"[文件已写入: {path}]"
+        return f"[文件操作完成: {path}]"
+
+    return f"[工具执行{status}]"
+
+
+def _find_turn_boundaries(messages: list[BaseMessage]) -> list[int]:
+    """找到每轮对话的起始索引（HumanMessage 的位置）。"""
+    boundaries = []
+    for i, msg in enumerate(messages):
+        if isinstance(msg, HumanMessage):
+            boundaries.append(i)
+    return boundaries
+
+
+def micro_compact(messages: list[BaseMessage], after_turns: int = MICRO_COMPACT_AFTER_TURNS) -> list[BaseMessage]:
+    """Layer 1: 将 N 轮前的工具结果替换为占位符。"""
+    if len(messages) < 2:
+        return messages
+
+    boundaries = _find_turn_boundaries(messages)
+    if len(boundaries) <= after_turns:
+        return messages  # 轮数不够，不需要压缩
+
+    # 找到 N 轮前的切割点
+    cutoff_idx = boundaries[-after_turns] if len(boundaries) >= after_turns else 0
+
+    # 需要一个 map: tool_call_id -> AIMessage（用于查找工具名）
+    tool_call_id_to_ai = {}
+    for msg in messages:
+        if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+            for tc in msg.tool_calls:
+                tool_call_id_to_ai[tc["id"]] = tc["name"]
+
+    result = []
+    for i, msg in enumerate(messages):
+        if i < cutoff_idx and isinstance(msg, ToolMessage):
+            placeholder = _make_tool_placeholder(msg)
+            if placeholder is None:
+                result.append(msg)  # view_file 等保留原内容
+            else:
+                # 创建一个轻量的 ToolMessage 替身
+                result.append(ToolMessage(
+                    content=placeholder,
+                    tool_call_id=msg.tool_call_id,
+                ))
+        else:
+            result.append(msg)
+
+    return result
+
+
+# ── Layer 2: Auto-Compact ────────────────────────────────────────────
+
+def _format_history_for_summary(messages: list[BaseMessage]) -> str:
+    """将消息列表格式化为可读的摘要输入。"""
+    parts = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            parts.append(f"用户: {content[:200]}")
+        elif isinstance(msg, AIMessage):
+            if msg.content:
+                content = msg.content if isinstance(msg.content, str) else str(msg.content)
+                parts.append(f"AI: {content[:200]}")
+            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    args_str = json.dumps(tc["args"], ensure_ascii=False)[:80]
+                    parts.append(f"AI 调用: {tc['name']}({args_str})")
+        elif isinstance(msg, ToolMessage):
+            # 已经被 micro_compact 替换过的占位符直接用
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            if content.startswith("[") and content.endswith("]"):
+                parts.append(content)
+            else:
+                try:
+                    data = json.loads(content)
+                    success = data.get("success", True)
+                    parts.append(f"工具结果: {'成功' if success else '失败'}")
+                except (json.JSONDecodeError, TypeError):
+                    parts.append(f"工具结果: {content[:100]}")
+    return "\n".join(parts)
+
+
+def auto_compact(
+    messages: list[BaseMessage],
+    llm,
+    instruction: str = "",
+    max_tokens: int = MAX_TOKENS,
+    keep_recent: int = KEEP_RECENT_MESSAGES,
+) -> tuple[list[BaseMessage], str | None]:
+    """Layer 2: token 超阈值时调用 LLM 生成摘要。
+
+    Returns:
+        (压缩后的消息列表, 摘要文本 或 None)
+    """
+    estimated = estimate_tokens(messages)
+    if estimated <= max_tokens:
+        return messages, None
+
+    logger.info(f"Auto-Compact 触发: 估算 {estimated} tokens > 阈值 {max_tokens}")
+
+    # 分割：旧消息 + 最近消息
+    split_point = max(1, len(messages) - keep_recent)
+    old_messages = messages[:split_point]
+    recent_messages = messages[split_point:]
+
+    # 生成摘要
+    history_text = _format_history_for_summary(old_messages)
+    instruction_section = f"特别关注以下方面：{instruction}" if instruction else ""
+
+    prompt = SUMMARY_PROMPT.format(
+        max_chars=SUMMARY_MAX_CHARS,
+        instruction_section=instruction_section,
+        history=history_text,
+    )
+
+    try:
+        summary_response = llm.invoke([HumanMessage(content=prompt)])
+        summary_text = summary_response.content if isinstance(summary_response.content, str) else str(summary_response.content)
+    except Exception as e:
+        logger.error(f"Auto-Compact 摘要生成失败: {e}")
+        # 降级：直接截断
+        return messages[-keep_recent:], None
+
+    logger.info(f"Auto-Compact 完成: {len(messages)} 条消息 -> {len(recent_messages) + 1} 条")
+
+    # 构建压缩后的消息列表
+    summary_msg = SystemMessage(content=f"[对话历史摘要]\n{summary_text}")
+    return [summary_msg] + recent_messages, summary_text
+
+
+# ── Layer 3: Manual Compact（工具调用入口）────────────────────────────
+
+def manual_compact(
+    messages: list[BaseMessage],
+    llm,
+    instruction: str = "",
+) -> tuple[list[BaseMessage], str]:
+    """Layer 3: Agent 主动调用的压缩。
+
+    Returns:
+        (压缩后的消息列表, 摘要文本)
+    """
+    keep_recent = min(KEEP_RECENT_MESSAGES, len(messages) // 2)
+    keep_recent = max(keep_recent, 4)  # 至少保留 4 条
+
+    old_messages = messages[:-keep_recent] if len(messages) > keep_recent else messages[:1]
+    recent_messages = messages[-keep_recent:] if len(messages) > keep_recent else messages[1:]
+
+    history_text = _format_history_for_summary(old_messages)
+    instruction_section = f"特别关注以下方面：{instruction}" if instruction else ""
+
+    prompt = SUMMARY_PROMPT.format(
+        max_chars=SUMMARY_MAX_CHARS,
+        instruction_section=instruction_section,
+        history=history_text,
+    )
+
+    try:
+        summary_response = llm.invoke([HumanMessage(content=prompt)])
+        summary_text = summary_response.content if isinstance(summary_response.content, str) else str(summary_response.content)
+    except Exception as e:
+        logger.error(f"Manual Compact 摘要生成失败: {e}")
+        return recent_messages, f"压缩失败: {e}"
+
+    summary_msg = SystemMessage(content=f"[对话历史摘要]\n{summary_text}")
+    return [summary_msg] + recent_messages, summary_text
