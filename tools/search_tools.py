@@ -4,7 +4,7 @@ from pathlib import Path
 from langchain_core.tools import tool
 
 MAX_MATCHES = 50
-MAX_FILES = 200
+MAX_FILES = 100
 
 # 可搜索的文件扩展名
 SEARCHABLE_EXTENSIONS = {
@@ -85,7 +85,7 @@ def search_code(pattern: str, path: str = ".", include_pattern: str = "") -> str
 
 
 @tool
-def list_files(path: str = ".", pattern: str = "*", max_depth: int = 3) -> str:
+def list_files(path: str = ".", pattern: str = "*", max_depth: int = 2) -> str:
     """列出目录中的文件和子目录，支持 glob 模式过滤。
 
     Args:

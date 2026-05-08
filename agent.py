@@ -17,25 +17,13 @@ from context_manager import micro_compact, auto_compact, manual_compact
 
 logger = logging.getLogger(__name__)
 
+# 工具结果最大字符数，超过则截断（保留头尾）
+MAX_TOOL_RESULT_CHARS = 8000
 
 SYSTEM_PROMPT_TEMPLATE = """\
 你是一个 AI 编码助手，可以直接操作项目文件系统。
 
 项目根目录: {project_root}
-
-## 可用工具
-
-### 只读（免审批）
-- view_file(path, start_line?, end_line?): 读取文件内容。支持行范围。编辑前务必先查看。
-- search_code(pattern, path?): 用正则在文件中搜索代码。
-- list_files(path?, pattern?): 列出目录文件，支持 glob 过滤。
-
-### 可写（需审批）
-- edit_file(path, old_string, new_string): 局部修改文件，将 old_string 替换为 new_string。old_string 必须唯一匹配。
-- write_file(path, content): 覆盖写入文件全部内容。文件不存在则创建。
-- create_file(path, content): 创建新文件。已存在则失败。
-- create_directory(path): 创建目录（递归创建）。
-- run_command(command): 执行终端命令。
 
 ## 工作规则
 
@@ -91,6 +79,7 @@ def think(state: State) -> dict:
     project_root = state.get("project_root", ".")
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(project_root=project_root)
     messages = list(state["messages"])
+    original_msg_count = len(messages)  # 记录原始 state 消息数
 
     # Layer 3: 如果有 compact_summary，只保留压缩后的摘要 + 新消息
     compact_summary = state.get("compact_summary")
@@ -103,9 +92,14 @@ def think(state: State) -> dict:
     messages = micro_compact(messages)
 
     # Layer 2: Auto-Compact — token 超阈值时调用 LLM 生成摘要
+    result = {"messages": []}
     messages, summary = auto_compact(messages, llm)
     if summary:
         logger.info(f"Auto-Compact 摘要: {summary[:100]}...")
+        # 持久化压缩结果到 state，避免下轮重复处理完整历史
+        # compact_at 记录的是原始 state 中的位置，不是压缩后列表的长度
+        result["compact_summary"] = summary
+        result["compact_at"] = original_msg_count
 
     full_messages = [SystemMessage(content=system_prompt)] + messages
     response = tool_llm.invoke(full_messages)
@@ -120,7 +114,9 @@ def think(state: State) -> dict:
             "total_tokens": usage["total_tokens"] + um.get("total_tokens", 0),
         }
 
-    return {"messages": [response], "usage": usage}
+    result["messages"] = [response]
+    result["usage"] = usage
+    return result
 
 
 def execute_tools(state: State) -> dict:
@@ -174,6 +170,11 @@ def execute_tools(state: State) -> dict:
                         compact_instruction = signal_data.get("instruction", "")
                 except (json.JSONDecodeError, TypeError):
                     pass
+
+            # 截断过大的工具结果，防止 token 暴涨
+            if len(result) > MAX_TOOL_RESULT_CHARS:
+                keep = MAX_TOOL_RESULT_CHARS // 2
+                result = result[:keep] + f"\n... [结果已截断，原长 {len(result)} 字符] ...\n" + result[-keep:]
 
             results.append(ToolMessage(content=result, tool_call_id=tc["id"]))
         except Exception as e:
