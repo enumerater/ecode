@@ -62,25 +62,38 @@ def format_result_detail(tool_name, data):
         return
 
     if tool_name == "view_file":
+        path = data.get("path", "")
         content = data.get("content", "")
+        total = data.get("total_lines", 0)
+        showing = data.get("showing_lines", "")
+        path_str = f" [dim]{path}[/dim]" if path else ""
         if not content:
-            console.print("  [dim]✓ 文件为空[/dim]")
+            console.print(f"  [green]✓ 已读取[/green]{path_str} [dim](空文件)[/dim]")
             return
         lines = content.split("\n")
         preview = "\n".join(lines[:8])
-        suffix = f"\n  [dim]... 共 {len(lines)} 行[/dim]" if len(lines) > 8 else ""
-        console.print(f"  [green]✓ {len(lines)} 行[/green]\n  [dim]{preview}[/dim]{suffix}")
+        range_str = f" 行 {showing}" if showing else ""
+        suffix = f"\n  [dim]... 共 {total} 行[/dim]" if len(lines) > 8 else ""
+        console.print(f"  [green]✓ 已读取[/green]{path_str}[dim]{range_str}[/dim]\n  [dim]{preview}[/dim]{suffix}")
 
     elif tool_name == "edit_file":
-        console.print("  [green]✓ 替换成功[/green]")
+        path = data.get("path", "")
+        removed = data.get("lines_removed", 0)
+        added = data.get("lines_added", 0)
+        path_str = f" [dim]{path}[/dim]" if path else ""
+        console.print(f"  [green]✓ 已替换[/green]{path_str} [dim](-{removed} +{added} 行)[/dim]")
 
     elif tool_name in ("write_file", "create_file"):
-        size = data.get("bytes") or data.get("size") or 0
-        extra = f" [dim]({size} bytes)[/dim]" if size else ""
-        console.print(f"  [green]✓ 已写入[/green]{extra}")
+        path = data.get("path", "")
+        size = data.get("bytes_written") or data.get("bytes") or data.get("size") or 0
+        path_str = f" [dim]{path}[/dim]" if path else ""
+        size_str = f" [dim]({size} bytes)[/dim]" if size else ""
+        console.print(f"  [green]✓ 已写入[/green]{path_str}{size_str}")
 
     elif tool_name == "create_directory":
-        console.print("  [green]✓ 目录已创建[/green]")
+        path = data.get("path", "")
+        path_str = f" [dim]{path}[/dim]" if path else ""
+        console.print(f"  [green]✓ 目录已创建[/green]{path_str}")
 
     elif tool_name == "search_code":
         results = data.get("results") or data.get("matches", [])
@@ -131,7 +144,13 @@ def format_result_detail(tool_name, data):
         console.print(f"{prefix}  [dim]{preview}[/dim]{exit_str}")
 
     else:
-        console.print("  [green]✓ 完成[/green]")
+        # 通用兜底：提取关键字段展示
+        path = data.get("path", "")
+        msg = data.get("message", "")
+        summary = data.get("summary", "")
+        detail = path or msg or summary or ""
+        detail_str = f" [dim]{detail[:120]}[/dim]" if detail else ""
+        console.print(f"  [green]✓ 完成[/green]{detail_str}")
 
 
 # --- Public API ---
