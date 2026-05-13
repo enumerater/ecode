@@ -15,7 +15,7 @@ from .interactions import prompt_input, select_one, confirm, setup_readline, set
 from .display import (
     show_banner, show_session_info, show_help,
     format_text, format_tool_call, format_tool_result,
-    format_usage, format_error, format_time,
+    format_usage, format_error, format_time, TimerDisplay,
 )
 
 console = Console()
@@ -36,6 +36,9 @@ def _process_stream(input_data, config, thread_id, project_root):
     graph = get_graph()
     accumulated_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     interrupted = False
+
+    timer = TimerDisplay()
+    timer.start()
 
     for chunk in graph.stream(
         input_data,
@@ -59,6 +62,7 @@ def _process_stream(input_data, config, thread_id, project_root):
             # 中断处理
             if "__interrupt__" in data:
                 for intr in data["__interrupt__"]:
+                    elapsed = timer.stop()
                     return accumulated_usage, intr.value
 
             # 遍历节点更新（think 节点在这里）
@@ -125,7 +129,8 @@ def _process_stream(input_data, config, thread_id, project_root):
                 pass
 
     # 输出最终用量
-    format_usage(accumulated_usage)
+    elapsed = timer.stop()
+    format_usage(accumulated_usage, elapsed)
     return accumulated_usage, None
 
 

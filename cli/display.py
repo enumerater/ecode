@@ -1,9 +1,44 @@
 import json
+import threading
+import time
+import sys
 from datetime import datetime, timezone
 from rich.console import Console
 from rich.panel import Panel
 
 console = Console()
+
+
+class TimerDisplay:
+    """实时计时器，在 stderr 上显示，不影响 stdout 的 rich 输出。"""
+
+    def __init__(self):
+        self._start = 0.0
+        self._stop_event = threading.Event()
+        self._thread = None
+
+    def start(self):
+        self._start = time.time()
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._tick, daemon=True)
+        self._thread.start()
+
+    def _tick(self):
+        while not self._stop_event.is_set():
+            elapsed = time.time() - self._start
+            sys.stderr.write(f"\r⏱ {elapsed:.1f}s")
+            sys.stderr.flush()
+            time.sleep(0.2)
+        # 清除计时行
+        sys.stderr.write("\r" + " " * 20 + "\r")
+        sys.stderr.flush()
+
+    def stop(self):
+        if self._thread:
+            self._stop_event.set()
+            self._thread.join(timeout=1)
+        elapsed = time.time() - self._start
+        return elapsed
 
 TOOL_LABELS = {
     "view_file": "查看文件",
@@ -50,15 +85,16 @@ def format_tool_call_args(tool_name, args):
 
 
 def format_result_detail(tool_name, data):
+    label = tool_label(tool_name)
     if not data or not isinstance(data, dict):
-        console.print("  [green]✓ 完成[/green]")
+        console.print(f"  [green]✓ {label} 完成[/green]")
         return
 
     success = data.get("success", True)
     error = data.get("error") or data.get("message", "")
 
     if not success:
-        console.print(f"  [red]✗ 失败: {error or '未知错误'}[/red]")
+        console.print(f"  [red]✗ {label} 失败: {error or '未知错误'}[/red]")
         return
 
     if tool_name == "view_file":
@@ -68,38 +104,38 @@ def format_result_detail(tool_name, data):
         showing = data.get("showing_lines", "")
         path_str = f" [dim]{path}[/dim]" if path else ""
         if not content:
-            console.print(f"  [green]✓ 已读取[/green]{path_str} [dim](空文件)[/dim]")
+            console.print(f"  [green]✓ {label}[/green]{path_str} [dim](空文件)[/dim]")
             return
         lines = content.split("\n")
         preview = "\n".join(lines[:8])
         range_str = f" 行 {showing}" if showing else ""
         suffix = f"\n  [dim]... 共 {total} 行[/dim]" if len(lines) > 8 else ""
-        console.print(f"  [green]✓ 已读取[/green]{path_str}[dim]{range_str}[/dim]\n  [dim]{preview}[/dim]{suffix}")
+        console.print(f"  [green]✓ {label}[/green]{path_str}[dim]{range_str}[/dim]\n  [dim]{preview}[/dim]{suffix}")
 
     elif tool_name == "edit_file":
         path = data.get("path", "")
         removed = data.get("lines_removed", 0)
         added = data.get("lines_added", 0)
         path_str = f" [dim]{path}[/dim]" if path else ""
-        console.print(f"  [green]✓ 已替换[/green]{path_str} [dim](-{removed} +{added} 行)[/dim]")
+        console.print(f"  [green]✓ {label}[/green]{path_str} [dim](-{removed} +{added} 行)[/dim]")
 
     elif tool_name in ("write_file", "create_file"):
         path = data.get("path", "")
         size = data.get("bytes_written") or data.get("bytes") or data.get("size") or 0
         path_str = f" [dim]{path}[/dim]" if path else ""
         size_str = f" [dim]({size} bytes)[/dim]" if size else ""
-        console.print(f"  [green]✓ 已写入[/green]{path_str}{size_str}")
+        console.print(f"  [green]✓ {label}[/green]{path_str}{size_str}")
 
     elif tool_name == "create_directory":
         path = data.get("path", "")
         path_str = f" [dim]{path}[/dim]" if path else ""
-        console.print(f"  [green]✓ 目录已创建[/green]{path_str}")
+        console.print(f"  [green]✓ {label}[/green]{path_str}")
 
     elif tool_name == "search_code":
         results = data.get("results") or data.get("matches", [])
         count = data.get("count") or len(results)
         if not results and not count:
-            console.print("  [dim]✓ 无匹配结果[/dim]")
+            console.print(f"  [dim]✓ {label} 无匹配结果[/dim]")
             return
         if results:
             preview_lines = []
@@ -110,9 +146,9 @@ def format_result_detail(tool_name, data):
                     preview_lines.append(f'{r.get("file", "")}:{r.get("line", "")}  {(r.get("content") or r.get("text", "")).strip()}')
             preview = "\n".join(preview_lines)
             suffix = f"\n  [dim]... 共 {count} 处匹配[/dim]" if count > 5 else ""
-            console.print(f"  [green]✓ {count} 处匹配[/green]\n  [dim]{preview}[/dim]{suffix}")
+            console.print(f"  [green]✓ {label} {count} 处匹配[/green]\n  [dim]{preview}[/dim]{suffix}")
         else:
-            console.print(f"  [green]✓ {count} 处匹配[/green]")
+            console.print(f"  [green]✓ {label} {count} 处匹配[/green]")
 
     elif tool_name == "list_files":
         dirs = data.get("directories", [])
@@ -120,7 +156,7 @@ def format_result_detail(tool_name, data):
         all_items = dirs + files
         total = data.get("total") or len(all_items)
         if not all_items:
-            console.print("  [dim]✓ 空目录[/dim]")
+            console.print(f"  [dim]✓ {label} 空目录[/dim]")
             return
         preview = "\n".join(all_items[:15])
         suffix = f"\n  [dim]... 共 {total} 项[/dim]" if total > 15 else ""
@@ -150,7 +186,7 @@ def format_result_detail(tool_name, data):
         summary = data.get("summary", "")
         detail = path or msg or summary or ""
         detail_str = f" [dim]{detail[:120]}[/dim]" if detail else ""
-        console.print(f"  [green]✓ 完成[/green]{detail_str}")
+        console.print(f"  [green]✓ {label}[/green]{detail_str}")
 
 
 # --- Public API ---
@@ -223,11 +259,12 @@ def format_tool_result(data):
     format_result_detail(tool_name, parsed)
 
 
-def format_usage(data):
+def format_usage(data, elapsed=None):
     prompt = data.get("prompt_tokens", 0)
     completion = data.get("completion_tokens", 0)
     total = data.get("total_tokens", prompt + completion)
-    console.print(f"\n  [dim]⤷ 消耗: {total} tokens (输入 {prompt} + 输出 {completion})[/dim]")
+    elapsed_str = f" ⏱ {elapsed:.1f}s" if elapsed is not None else ""
+    console.print(f"\n  [dim]⤷ 消耗: {total} tokens (输入 {prompt} + 输出 {completion}){elapsed_str}[/dim]")
 
 
 def format_error(data):
