@@ -1,5 +1,4 @@
 import json
-import threading
 import time
 import sys
 from datetime import datetime, timezone
@@ -10,33 +9,15 @@ console = Console()
 
 
 class TimerDisplay:
-    """实时计时器，在 stderr 上显示，不影响 stdout 的 rich 输出。"""
+    """计时器，记录开始和结束时间，不实时刷新。"""
 
     def __init__(self):
         self._start = 0.0
-        self._stop_event = threading.Event()
-        self._thread = None
 
     def start(self):
         self._start = time.time()
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._tick, daemon=True)
-        self._thread.start()
-
-    def _tick(self):
-        while not self._stop_event.is_set():
-            elapsed = time.time() - self._start
-            sys.stderr.write(f"\r⏱ {elapsed:.1f}s")
-            sys.stderr.flush()
-            time.sleep(0.2)
-        # 清除计时行
-        sys.stderr.write("\r" + " " * 20 + "\r")
-        sys.stderr.flush()
 
     def stop(self):
-        if self._thread:
-            self._stop_event.set()
-            self._thread.join(timeout=1)
         elapsed = time.time() - self._start
         return elapsed
 
@@ -135,7 +116,7 @@ def format_result_detail(tool_name, data):
         results = data.get("results") or data.get("matches", [])
         count = data.get("count") or len(results)
         if not results and not count:
-            console.print(f"  [dim]✓ {label} 无匹配结果[/dim]")
+            console.print(f"  [green]✓ {label} 无匹配结果[/green]")
             return
         if results:
             preview_lines = []
@@ -156,11 +137,11 @@ def format_result_detail(tool_name, data):
         all_items = dirs + files
         total = data.get("total") or len(all_items)
         if not all_items:
-            console.print(f"  [dim]✓ {label} 空目录[/dim]")
+            console.print(f"  [green]✓ {label} 空目录[/green]")
             return
         preview = "\n".join(all_items[:15])
         suffix = f"\n  [dim]... 共 {total} 项[/dim]" if total > 15 else ""
-        console.print(f"  [dim]{preview}[/dim]{suffix}")
+        console.print(f"  [green]✓ {label}[/green]\n  [dim]{preview}[/dim]{suffix}")
 
     elif tool_name == "run_command":
         exit_code = data.get("exit_code", data.get("exitCode"))
@@ -172,12 +153,12 @@ def format_result_detail(tool_name, data):
                 exit_str = f" [red]✗ exit {exit_code}[/red]"
         output = data.get("output") or data.get("stdout", "")
         if not output:
-            console.print(f"  [dim](无输出)[/dim]{exit_str}")
+            console.print(f"  [green]✓ {label}[/green] [dim](无输出)[/dim]{exit_str}")
             return
         lines = output.split("\n")
         preview = "\n".join(lines[-10:])
         prefix = f"  [dim]... 省略 {len(lines) - 10} 行[/dim]\n" if len(lines) > 10 else ""
-        console.print(f"{prefix}  [dim]{preview}[/dim]{exit_str}")
+        console.print(f"  [green]✓ {label}[/green]\n{prefix}  [dim]{preview}[/dim]{exit_str}")
 
     else:
         # 通用兜底：提取关键字段展示
@@ -246,12 +227,16 @@ def format_tool_result(data):
         try:
             parsed = json.loads(result)
         except (ValueError, TypeError):
-            console.print(f"  [dim]{result[:300]}[/dim]")
+            label = tool_label(tool_name) if tool_name else ""
+            label_str = f"  [green]✓ {label}[/green] " if label else ""
+            console.print(f"{label_str}[dim]{result[:300]}[/dim]")
             return
     elif isinstance(result, dict):
         parsed = result
     elif result is not None:
-        console.print(f"  [dim]{str(result)[:300]}[/dim]")
+        label = tool_label(tool_name) if tool_name else ""
+        label_str = f"  [green]✓ {label}[/green] " if label else ""
+        console.print(f"{label_str}[dim]{str(result)[:300]}[/dim]")
         return
     else:
         parsed = data
