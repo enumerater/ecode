@@ -3,6 +3,9 @@
 新增模型只需在 config.yaml 的 llm.configs 下添加配置块，
 修改 active 字段即可切换，无需改动代码。
 """
+from dotenv import load_dotenv  # 新增
+load_dotenv()  # 自动读取 .env 文件  新增
+
 
 import os
 import yaml
