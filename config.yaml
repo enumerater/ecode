@@ -2,3 +2,48 @@
 backend:
   url: "http://127.0.0.1:8000"
   timeout: 30000
+
+# ── LLM 模型配置 ──────────────────────────────────────────────
+# 切换模型只需改 active 的值，无需改代码
+llm:
+  # 当前使用的模型配置名（对应 configs 中的 key）
+  active: "shang_tang"
+
+  # 模型配置列表
+  configs:
+    ali:
+      provider: openai
+      model: qwen-plus
+      api_key_env: ALI
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      temperature: 0
+      streaming: true
+      stream_usage: true
+
+    mimo:
+      provider: openai
+      model: mimo-v2.5-pro
+      api_key_env: MIMO
+      base_url: https://token-plan-cn.xiaomimimo.com/v1
+      temperature: 0
+      streaming: true
+      stream_usage: true
+
+    shang_tang:
+      provider: openai
+      model: deepseek-v4-flash
+      api_key_env: SHANG_TANG
+      base_url: https://token.sensenova.cn/v1
+      temperature: 0
+      streaming: true
+      stream_usage: true
+
+    # 新增模型只需在此添加新的配置块，例如：
+    # deepseek_official:
+    #   provider: openai
+    #   model: deepseek-chat
+    #   api_key_env: DEEPSEEK
+    #   base_url: https://api.deepseek.com/v1
+    #   temperature: 0
+    #   streaming: true
+    #   stream_usage: true
