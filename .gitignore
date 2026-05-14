@@ -2,7 +2,5 @@
 .idea/
 __pycache__/
 *.pyc
-ARCHITECTURE.md
 CLAUDE.md
 ecode.egg-info
-docs/
