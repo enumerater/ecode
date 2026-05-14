@@ -5,7 +5,8 @@
       "Bash(python *)",
       "Bash(Remove-Item *)",
       "Bash(npm install *)",
-      "Bash(pip install *)"
+      "Bash(pip install *)",
+      "WebSearch"
     ]
   }
 }

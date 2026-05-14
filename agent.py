@@ -11,20 +11,19 @@ from langgraph.types import interrupt
 
 from model import llm
 from session import checkpointer
-from tools import ALL_TOOLS, DANGEROUS_TOOLS, set_project_root
+from tools import ALL_TOOLS, SAFE_TOOLS, DANGEROUS_TOOLS, set_project_root
 from tools.context_tools import COMPACT_SIGNAL
+from tools.tool_index import build_tool_index
 from context_manager import micro_compact, auto_compact, manual_compact
+from project_context import load_project_context
 
 logger = logging.getLogger(__name__)
 
 # 工具结果最大字符数，超过则截断（保留头尾）
 MAX_TOOL_RESULT_CHARS = 8000
 
-SYSTEM_PROMPT_TEMPLATE = """\
-你是一个 AI 编码助手，可以直接操作项目文件系统。
-
-项目根目录: {project_root}
-
+# 不可变工作规则（纯静态文本，不含模板变量，跨轮复用以最大化 KV cache）
+IMMUTABLE_INSTRUCTIONS = """\
 ## 工作规则
 
 ### 先读后写
@@ -55,12 +54,41 @@ SYSTEM_PROMPT_TEMPLATE = """\
   - 感觉上下文中有大量不再相关的历史信息
   - 接连完成多个独立小任务后
 
+### 工具详情
+工具一览表已在上方列出。当你不确定某个工具的参数或用法时，先调用 get_tool_details 获取完整文档，再使用该工具。
+
 ## 沟通
 - 简洁直接，不要废话。
 - 匹配用户语言（中文或英文）。
 - 不确定时先问，不要猜。
 - 展示变更时用 diff 格式（- 旧 / + 新）。
 """
+
+
+def _build_immutable_context(project_root: str) -> str:
+    """构建不可变 system prompt 前缀。每个 session 只调用一次。
+
+    内容跨轮完全一致，LLM provider 可缓存 KV。
+    """
+    sections = []
+
+    # 头部：角色 + 项目根目录
+    header = f"你是一个 AI 编码助手，可以直接操作项目文件系统。\n\n项目根目录: {project_root}"
+    sections.append(header)
+
+    # ecode.md 项目上下文
+    ecode_md = load_project_context(project_root)
+    if ecode_md:
+        sections.append(f"## 项目上下文 (ecode.md)\n\n{ecode_md}")
+
+    # 工具索引表
+    tool_index = build_tool_index(ALL_TOOLS, SAFE_TOOLS, DANGEROUS_TOOLS)
+    sections.append(f"## 可用工具一览\n\n{tool_index}\n\n使用 `get_tool_details` 工具获取某个工具的完整文档。")
+
+    # 工作规则
+    sections.append(IMMUTABLE_INSTRUCTIONS)
+
+    return "\n\n---\n\n".join(sections)
 
 tool_llm = llm.bind_tools(ALL_TOOLS)
 
@@ -73,13 +101,18 @@ class State(TypedDict):
     usage: dict  # {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}
     compact_summary: str  # 最近一次压缩的摘要文本
     compact_at: int  # 压缩时的消息数量，用于判断哪些是新消息
+    immutable_context: str  # 不可变上下文（ecode.md + 工具索引 + 工作规则），构建一次跨轮复用
 
 
 def think(state: State) -> dict:
-    project_root = state.get("project_root", ".")
-    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(project_root=project_root)
     messages = list(state["messages"])
-    original_msg_count = len(messages)  # 记录原始 state 消息数
+    original_msg_count = len(messages)
+
+    # ── 不可变上下文：构建一次，跨轮复用 ──
+    immutable_ctx = state.get("immutable_context")
+    if not immutable_ctx:
+        project_root = state.get("project_root", ".")
+        immutable_ctx = _build_immutable_context(project_root)
 
     # Layer 3: 如果有 compact_summary，只保留压缩后的摘要 + 新消息
     compact_summary = state.get("compact_summary")
@@ -96,12 +129,15 @@ def think(state: State) -> dict:
     messages, summary = auto_compact(messages, llm)
     if summary:
         logger.info(f"Auto-Compact 摘要: {summary[:100]}...")
-        # 持久化压缩结果到 state，避免下轮重复处理完整历史
-        # compact_at 记录的是原始 state 中的位置，不是压缩后列表的长度
         result["compact_summary"] = summary
         result["compact_at"] = original_msg_count
 
-    full_messages = [SystemMessage(content=system_prompt)] + messages
+    # 首次构建时存入 state，后续轮次直接复用
+    if not state.get("immutable_context"):
+        result["immutable_context"] = immutable_ctx
+
+    # ── 组装：不可变 SystemMessage（缓存前缀）+ 可变消息 ──
+    full_messages = [SystemMessage(content=immutable_ctx)] + messages
     response = tool_llm.invoke(full_messages)
 
     # 累积 token 用量
