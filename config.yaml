@@ -3,6 +3,14 @@ backend:
   url: "http://127.0.0.1:8000"
   timeout: 30000
 
+# ── 数据库配置 ────────────────────────────────────────────────
+database:
+  host: localhost
+  port: 3306
+  user: root
+  password_env: ECODE_DB_PASSWORD   # 从 .env 读取密码
+  database: ecode
+
 # ── LLM 模型配置 ──────────────────────────────────────────────
 # 切换模型只需改 active 的值，无需改代码
 llm:

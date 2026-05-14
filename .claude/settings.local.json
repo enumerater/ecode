@@ -6,7 +6,10 @@
       "Bash(Remove-Item *)",
       "Bash(npm install *)",
       "Bash(pip install *)",
-      "WebSearch"
+      "WebSearch",
+      "WebFetch(domain:langchain-ai.github.io)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }
