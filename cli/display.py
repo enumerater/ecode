@@ -9,17 +9,27 @@ console = Console()
 
 
 class TimerDisplay:
-    """计时器，记录开始和结束时间，不实时刷新。"""
+    """计时器，支持阶段计时。"""
 
     def __init__(self):
         self._start = 0.0
+        self._phase_start = 0.0
 
     def start(self):
         self._start = time.time()
+        self._phase_start = self._start
 
     def stop(self):
         elapsed = time.time() - self._start
         return elapsed
+
+    def phase_start(self):
+        """开始一个阶段计时。"""
+        self._phase_start = time.time()
+
+    def phase_elapsed(self):
+        """返回当前阶段耗时（秒）。"""
+        return time.time() - self._phase_start
 
 TOOL_LABELS = {
     "view_file": "查看文件",
@@ -216,32 +226,88 @@ def format_tool_call(data):
     console.print(f"\n[blue]> {label}[/blue]{detail_str}[blue] ...[/blue]")
 
 
+def _brief_result_summary(tool_name, parsed):
+    """生成工具结果的简略摘要（一行）。"""
+    label = tool_label(tool_name)
+    if not parsed or not isinstance(parsed, dict):
+        return f"[green]✓ {label}[/green]"
+
+    success = parsed.get("success", True)
+    if not success:
+        error = parsed.get("error") or parsed.get("message", "未知错误")
+        return f"[red]✗ {label} 失败: {error}[/red]"
+
+    if tool_name == "view_file":
+        path = parsed.get("path", "")
+        total = parsed.get("total_lines", 0)
+        return f"[green]✓ {label}[/green] [dim]{path}[/dim] ({total} 行)"
+    elif tool_name == "edit_file":
+        path = parsed.get("path", "")
+        removed = parsed.get("lines_removed", 0)
+        added = parsed.get("lines_added", 0)
+        return f"[green]✓ {label}[/green] [dim]{path}[/dim] (-{removed} +{added})"
+    elif tool_name in ("write_file", "create_file"):
+        path = parsed.get("path", "")
+        size = parsed.get("bytes_written") or parsed.get("bytes") or parsed.get("size") or 0
+        return f"[green]✓ {label}[/green] [dim]{path}[/dim] ({size} bytes)"
+    elif tool_name == "create_directory":
+        path = parsed.get("path", "")
+        return f"[green]✓ {label}[/green] [dim]{path}[/dim]"
+    elif tool_name == "search_code":
+        results = parsed.get("results") or parsed.get("matches", [])
+        count = parsed.get("count") or len(results)
+        return f"[green]✓ {label}[/green] {count} 处匹配"
+    elif tool_name == "list_files":
+        total = parsed.get("total", 0)
+        return f"[green]✓ {label}[/green] 共 {total} 项"
+    elif tool_name == "run_command":
+        exit_code = parsed.get("exit_code", parsed.get("exitCode"))
+        if exit_code == 0:
+            return f"[green]✓ {label}[/green] [green]exit 0[/green]"
+        else:
+            return f"[red]✗ {label} exit {exit_code}[/red]"
+    else:
+        path = parsed.get("path", "")
+        msg = parsed.get("message", "")
+        detail = path or msg or ""
+        if detail:
+            return f"[green]✓ {label}[/green] [dim]{detail[:80]}[/dim]"
+        return f"[green]✓ {label}[/green]"
+
+
 def format_tool_result(data):
     tool_call_id = data.get("tool_call_id")
     tool_name = _tool_call_map.pop(tool_call_id, "") if tool_call_id else ""
     if not tool_name:
         tool_name = data.get("_tool_name", "")
 
+    elapsed = data.get("_elapsed")
+    elapsed_str = f" [dim]⏱ {elapsed:.1f}s[/dim]" if elapsed is not None else ""
+
     result = data.get("result")
     if isinstance(result, str):
         try:
             parsed = json.loads(result)
         except (ValueError, TypeError):
-            label = tool_label(tool_name) if tool_name else ""
-            label_str = f"  [green]✓ {label}[/green] " if label else ""
-            console.print(f"{label_str}[dim]{result[:300]}[/dim]")
+            summary = _brief_result_summary(tool_name, None)
+            console.print(f"  {summary}{elapsed_str}")
             return
     elif isinstance(result, dict):
         parsed = result
     elif result is not None:
-        label = tool_label(tool_name) if tool_name else ""
-        label_str = f"  [green]✓ {label}[/green] " if label else ""
-        console.print(f"{label_str}[dim]{str(result)[:300]}[/dim]")
+        summary = _brief_result_summary(tool_name, None)
+        console.print(f"  {summary}{elapsed_str}")
         return
     else:
         parsed = data
 
-    format_result_detail(tool_name, parsed)
+    # 先输出一行摘要
+    summary = _brief_result_summary(tool_name, parsed)
+    console.print(f"  {summary}{elapsed_str}")
+
+    # 再输出详细内容（仅对查看/搜索/命令等有实质内容的工具）
+    if tool_name in ("view_file", "search_code", "run_command", "list_files"):
+        format_result_detail(tool_name, parsed)
 
 
 def format_usage(data, elapsed=None):

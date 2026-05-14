@@ -105,10 +105,11 @@ def _process_stream(input_data, config, thread_id, project_root):
                         "tool_call_id": msg.tool_call_id,
                         "result": msg.content,
                         "_tool_name": tool_name,
+                        "_elapsed": timer.phase_elapsed(),
                     })
                     continue
 
-                # AI 消息：注册工具调用映射，输出文本
+                # AI 消息：注册工具调用映射，输出文本，开始阶段计时
                 if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
                     for tc in msg["tool_calls"]:
                         format_tool_call({
@@ -116,6 +117,8 @@ def _process_stream(input_data, config, thread_id, project_root):
                             "tool_call_id": tc.get("id"),
                             "args": tc.get("args"),
                         })
+                    # 开始阶段计时
+                    timer.phase_start()
 
                 content = msg.content
                 if isinstance(content, list):
