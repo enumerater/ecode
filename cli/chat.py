@@ -21,7 +21,7 @@ from .display import (
     tool_label, format_tool_call_args, format_result_detail,
     _brief_result_summary,
 )
-from .live_status import ThinkingIndicator
+from .live_status import QuerySpinner, THINKING, TOOL_USE, RESPONDING
 
 console = Console(force_terminal=True)
 
@@ -35,23 +35,13 @@ def get_graph():
     return _graph
 
 
-def _stop_spinner(thinking, is_thinking_flag):
-    """安全停止 spinner。"""
-    if is_thinking_flag:
-        thinking.stop()
-    return False
-
-
 def _process_stream(input_data, config, thread_id, project_root):
     """处理 graph.stream() 的输出。"""
     graph = get_graph()
     accumulated_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
-    overall_start = time.time()
-    phase_start = time.time()
-
-    thinking = ThinkingIndicator()
-    is_thinking = False
+    spinner = QuerySpinner()
+    spinner.start()
     pending_tools = {}
 
     try:
@@ -74,7 +64,7 @@ def _process_stream(input_data, config, thread_id, project_root):
             # ==============================================
             if typ == "updates" and isinstance(data, dict):
                 if "__interrupt__" in data:
-                    is_thinking = _stop_spinner(thinking, is_thinking)
+                    spinner.stop()
                     for intr in data["__interrupt__"]:
                         return accumulated_usage, intr.value
 
@@ -83,12 +73,8 @@ def _process_stream(input_data, config, thread_id, project_root):
                         continue
 
                     if node_name == "think":
-                        if "messages" in node_data and not is_thinking:
-                            thinking.start()
-                            is_thinking = True
-
-                    if node_name == "execute_tools":
-                        is_thinking = _stop_spinner(thinking, is_thinking)
+                        if "messages" in node_data:
+                            spinner.set_state(THINKING)
 
                     if "messages" in node_data:
                         for msg in node_data["messages"]:
@@ -102,8 +88,8 @@ def _process_stream(input_data, config, thread_id, project_root):
                                         for block in content
                                     )
                                 if content:
-                                    is_thinking = _stop_spinner(thinking, is_thinking)
-                                    format_text({"chunk": content})
+                                    spinner.set_state(RESPONDING)
+                                    spinner.stream_write("\n" + content)
 
                     if "usage" in node_data:
                         accumulated_usage = node_data["usage"]
@@ -118,8 +104,7 @@ def _process_stream(input_data, config, thread_id, project_root):
 
                     # ── AI 消息：注册工具调用 ──
                     if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
-                        is_thinking = _stop_spinner(thinking, is_thinking)
-
+                        spinner.stream_end()  # 结束流式输出
                         for tc in msg.tool_calls:
                             tc_id = tc.get("id", "")
                             tc_name = tc.get("name", "")
@@ -134,20 +119,20 @@ def _process_stream(input_data, config, thread_id, project_root):
                             }
 
                             label = tool_label(tc_name)
+                            spinner.set_state(TOOL_USE, label)
                             detail = format_tool_call_args(tc_name, tc_args)
                             if detail:
                                 console.print(f"\n  [blue]▸[/blue] [bold]{label}[/bold] [dim]{detail}[/dim]")
                             else:
                                 console.print(f"\n  [blue]▸[/blue] [bold]{label}[/bold]")
 
-                        phase_start = time.time()
-
-                    # ── 工具结果：显示完成状态 ──
+                    # ── 工具结果 ──
                     elif isinstance(msg, ToolMessage):
+                        spinner.stream_end()  # 结束流式输出
                         tc_id = msg.tool_call_id
                         tool_info = pending_tools.pop(tc_id, {})
                         tool_name = tool_info.get("name", "") or getattr(msg, "name", "")
-                        elapsed = time.time() - tool_info.get("start_time", phase_start)
+                        elapsed = time.time() - tool_info.get("start_time", time.time())
 
                         result_content = msg.content
                         try:
@@ -165,6 +150,8 @@ def _process_stream(input_data, config, thread_id, project_root):
                             if success and isinstance(parsed, dict):
                                 format_result_detail(tool_name, parsed)
 
+                        spinner.set_state(THINKING)
+
                     # ── AI 文本回复 ──
                     elif isinstance(msg, AIMessage) and msg.content:
                         content = msg.content
@@ -174,14 +161,15 @@ def _process_stream(input_data, config, thread_id, project_root):
                                 for block in content
                             )
                         if content:
-                            is_thinking = _stop_spinner(thinking, is_thinking)
-                            format_text({"chunk": content})
+                            spinner.set_state(RESPONDING)
+                            spinner.stream_write(content)
                 except Exception as e:
                     pass
     finally:
-        is_thinking = _stop_spinner(thinking, is_thinking)
+        spinner.stream_end()
+        spinner.stop()
 
-    overall_elapsed = time.time() - overall_start
+    overall_elapsed = spinner.elapsed()
     format_usage(accumulated_usage, overall_elapsed)
     return accumulated_usage, None
 
