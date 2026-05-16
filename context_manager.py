@@ -1,8 +1,10 @@
-"""三层上下文压缩管理器。
+"""五层上下文压缩管理器。
 
 Layer 1: micro_compact — 每轮自动，替换旧工具结果为占位符
 Layer 2: auto_compact  — token 超阈值时调用 LLM 生成摘要
 Layer 3: Manual compact — Agent 通过 compact 工具主动触发（见 tools/context_tools.py）
+Layer 4: reactive_compact — prompt-too-long 错误时自动触发
+Layer 5: snip_compact — 移除对话中间大段内容，保留首尾
 """
 
 import json
@@ -42,7 +44,14 @@ SUMMARY_PROMPT = """请将以下对话历史压缩为简洁摘要，保留：
 # ── Token 估算 ────────────────────────────────────────────────────────
 
 def estimate_tokens(messages: list[BaseMessage]) -> int:
-    """基于字符数的轻量 token 估算。"""
+    """估算 token 数，优先使用 tiktoken，回退到字符启发式。"""
+    try:
+        from context.token_counter import estimate_messages_tokens
+        return estimate_messages_tokens(messages)
+    except ImportError:
+        pass
+
+    # 回退：字符启发式
     total = 0
     for msg in messages:
         content = msg.content if isinstance(msg.content, str) else str(msg.content)
@@ -260,3 +269,102 @@ def manual_compact(
 
     summary_msg = SystemMessage(content=f"[对话历史摘要]\n{summary_text}")
     return [summary_msg] + recent_messages, summary_text
+
+
+# ── Layer 4: Reactive Compact（prompt-too-long 错误时触发）─────────────
+
+def reactive_compact(
+    messages: list[BaseMessage],
+    llm,
+    keep_recent: int = KEEP_RECENT_MESSAGES,
+) -> tuple[list[BaseMessage], str | None]:
+    """Layer 4: 当 prompt-too-long 错误发生时自动触发压缩。
+
+    强制压缩，不检查 token 阈值。
+
+    Returns:
+        (压缩后的消息列表, 摘要文本 或 None)
+    """
+    if len(messages) <= 4:
+        return messages, None
+
+    logger.info(f"Reactive Compact 触发: {len(messages)} 条消息")
+
+    # 分割：旧消息 + 最近消息
+    split_point = max(1, len(messages) - keep_recent)
+    old_messages = messages[:split_point]
+    recent_messages = messages[split_point:]
+
+    # 生成摘要
+    history_text = _format_history_for_summary(old_messages)
+    prompt = SUMMARY_PROMPT.format(
+        max_chars=SUMMARY_MAX_CHARS,
+        instruction_section="",
+        history=history_text,
+    )
+
+    try:
+        summary_response = llm.invoke([HumanMessage(content=prompt)])
+        summary_text = summary_response.content if isinstance(summary_response.content, str) else str(summary_response.content)
+    except Exception as e:
+        logger.error(f"Reactive Compact 摘要生成失败: {e}")
+        # 降级：直接截断
+        return messages[-keep_recent:], None
+
+    logger.info(f"Reactive Compact 完成: {len(messages)} 条消息 -> {len(recent_messages) + 1} 条")
+    summary_msg = SystemMessage(content=f"[对话历史摘要]\n{summary_text}")
+    return [summary_msg] + recent_messages, summary_text
+
+
+# ── Layer 5: Snip Compact（移除中间大段内容）──────────────────────────
+
+def snip_compact(
+    messages: list[BaseMessage],
+    llm,
+    keep_first: int = 3,
+    keep_last: int = 10,
+) -> tuple[list[BaseMessage], str | None]:
+    """Layer 5: 移除对话中间的大段内容，保留首尾。
+
+    适用于对话很长但中间内容不再相关的情况。
+
+    Args:
+        messages: 消息列表
+        llm: LLM 实例
+        keep_first: 保留前 N 条消息
+        keep_last: 保留后 N 条消息
+
+    Returns:
+        (压缩后的消息列表, 摘要文本 或 None)
+    """
+    total = len(messages)
+    if total <= keep_first + keep_last + 5:
+        return messages, None  # 消息太少，不需要 snip
+
+    logger.info(f"Snip Compact 触发: {total} 条消息，保留前 {keep_first} + 后 {keep_last}")
+
+    first_part = messages[:keep_first]
+    middle_part = messages[keep_first:total - keep_last]
+    last_part = messages[total - keep_last:]
+
+    # 对中间部分生成摘要
+    history_text = _format_history_for_summary(middle_part)
+    prompt = SUMMARY_PROMPT.format(
+        max_chars=SUMMARY_MAX_CHARS,
+        instruction_section="",
+        history=history_text,
+    )
+
+    try:
+        summary_response = llm.invoke([HumanMessage(content=prompt)])
+        summary_text = summary_response.content if isinstance(summary_response.content, str) else str(summary_response.content)
+    except Exception as e:
+        logger.error(f"Snip Compact 摘要生成失败: {e}")
+        # 降级：直接拼接首尾
+        return first_part + last_part, None
+
+    summary_msg = SystemMessage(content=f"[中间对话摘要]\n{summary_text}")
+    result = first_part + [summary_msg] + last_part
+
+    logger.info(f"Snip Compact 完成: {total} 条消息 -> {len(result)} 条")
+    return result, summary_text

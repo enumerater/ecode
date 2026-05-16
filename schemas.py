@@ -7,6 +7,7 @@ class ChatRequest(BaseModel):
     prompt: str
     project_root: str = "."
     thread_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    permission_mode: str = "default"  # default, plan, auto_approve, yolo
 
 
 class ResumeRequest(BaseModel):

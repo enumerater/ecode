@@ -7,9 +7,10 @@ def build_tool_index(
     tools: list[BaseTool],
     safe_tools: set[str],
     dangerous_tools: set[str],
+    tool_meta: dict[str, dict] = None,
 ) -> str:
     """生成工具摘要 markdown 表格，用于 system prompt。"""
-    lines = ["| Tool | Description | Type |", "|------|-------------|------|"]
+    lines = ["| Tool | Description | Type | Concurrency |", "|------|-------------|------|-------------|"]
     for t in tools:
         doc = (t.description or "").strip()
         first_line = doc.split("\n")[0].strip()
@@ -21,7 +22,13 @@ def build_tool_index(
             tool_type = "dangerous"
         else:
             tool_type = "meta"
-        lines.append(f"| {t.name} | {first_line} | {tool_type} |")
+        # 并发信息
+        if tool_meta and t.name in tool_meta:
+            meta = tool_meta[t.name]
+            concurrency = "parallel" if meta.get("is_concurrency_safe") else "serial"
+        else:
+            concurrency = "serial"
+        lines.append(f"| {t.name} | {first_line} | {tool_type} | {concurrency} |")
     return "\n".join(lines)
 
 

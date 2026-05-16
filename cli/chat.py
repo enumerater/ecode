@@ -11,6 +11,7 @@ from langgraph.types import Command
 
 from agent import build_graph
 from session import session_manager
+from permissions.modes import PermissionMode, MODE_DESCRIPTIONS
 from .interactions import prompt_input, select_one, confirm, setup_readline, set_slash_commands
 from .display import (
     show_banner, show_session_info, show_help,
@@ -241,12 +242,14 @@ def cmd_history(thread_id):
 def start_chat():
     # 初始化 readline 历史和 Tab 补全
     setup_readline()
-    set_slash_commands(["help", "sessions", "switch", "new", "delete", "history", "clear", "exit"])
+    set_slash_commands(["help", "sessions", "switch", "new", "delete", "history", "clear", "exit", "mode", "plan"])
 
     show_banner()
 
     thread_id = str(uuid.uuid4())
     project_root = __import__("os").getcwd().replace("\\", "/")
+    permission_mode = "default"
+    plan_mode = False
 
     show_session_info(thread_id, project_root)
 
@@ -287,6 +290,27 @@ def start_chat():
                 console.clear()
                 show_banner()
                 show_session_info(thread_id, project_root)
+            elif cmd == "/mode":
+                # 显示当前模式和切换选项
+                console.print(f"[dim]当前权限模式: {permission_mode}[/dim]")
+                console.print(f"[dim]{MODE_DESCRIPTIONS.get(PermissionMode(permission_mode), '')}[/dim]")
+                options = [
+                    {"value": m.value, "label": f"{m.value} - {MODE_DESCRIPTIONS.get(m, '')}"}
+                    for m in PermissionMode
+                ]
+                new_mode = select_one(options, "选择权限模式：")
+                if new_mode:
+                    permission_mode = new_mode
+                    console.print(f"[green]已切换到: {permission_mode}[/green]")
+            elif cmd == "/plan":
+                plan_mode = not plan_mode
+                if plan_mode:
+                    permission_mode = "plan"
+                    console.print("[green]已进入计划模式。Agent 将只分析规划，不执行修改。[/green]")
+                    console.print("[dim]再次输入 /plan 或让 agent 调用 exit_plan_mode 退出[/dim]")
+                else:
+                    permission_mode = "default"
+                    console.print("[green]已退出计划模式。现在可以执行修改操作。[/green]")
             elif cmd == "/exit":
                 console.print("再见！")
                 break
@@ -300,6 +324,8 @@ def start_chat():
         input_data = {
             "messages": [HumanMessage(content=trimmed)],
             "project_root": project_root,
+            "permission_mode": permission_mode,
+            "plan_mode": plan_mode,
         }
 
         try:
