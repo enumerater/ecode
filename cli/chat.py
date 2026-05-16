@@ -1,8 +1,10 @@
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))  # 把项目根目录加入路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import uuid
+import json
+import time
 
 from rich.console import Console
 from rich.panel import Panel
@@ -15,13 +17,14 @@ from permissions.modes import PermissionMode, MODE_DESCRIPTIONS
 from .interactions import prompt_input, select_one, confirm, setup_readline, set_slash_commands
 from .display import (
     show_banner, show_session_info, show_help,
-    format_text, format_tool_call, format_tool_result,
-    format_usage, format_error, format_time, TimerDisplay,
+    format_text, format_usage, format_error, format_time,
+    tool_label, format_tool_call_args, format_result_detail,
+    _brief_result_summary,
 )
+from .live_status import ThinkingIndicator
 
-console = Console()
+console = Console(force_terminal=True)
 
-# 全局单例
 _graph = None
 
 
@@ -32,114 +35,254 @@ def get_graph():
     return _graph
 
 
+def _stop_spinner(thinking, is_thinking_flag):
+    """安全停止 spinner。"""
+    if is_thinking_flag:
+        thinking.stop()
+    return False
+
+
 def _process_stream(input_data, config, thread_id, project_root):
-    """处理 graph.stream() 的输出，返回是否遇到中断。"""
+    """处理 graph.stream() 的输出。"""
     graph = get_graph()
     accumulated_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-    interrupted = False
 
-    timer = TimerDisplay()
-    timer.start()
+    overall_start = time.time()
+    phase_start = time.time()
 
-    for chunk in graph.stream(
-        input_data,
-        stream_mode=["messages", "updates"],
-        config=config,
-        version="v2",
-    ):
-        # graph.stream(version="v2") 返回 dict: {"type": ..., "ns": ..., "data": ...}
-        if isinstance(chunk, dict):
-            typ = chunk.get("type", "")
-            data = chunk.get("data")
-        elif isinstance(chunk, (list, tuple)) and len(chunk) >= 2:
-            typ, data = chunk
-        else:
-            continue
+    thinking = ThinkingIndicator()
+    is_thinking = False
+    pending_tools = {}
 
-        # ==============================================
-        # 【修复 1】处理 updates：这里才有真正的消息和用量
-        # ==============================================
-        if typ == "updates" and isinstance(data, dict):
-            # 中断处理
-            if "__interrupt__" in data:
-                for intr in data["__interrupt__"]:
-                    elapsed = timer.stop()
-                    return accumulated_usage, intr.value
+    try:
+        for chunk in graph.stream(
+            input_data,
+            stream_mode=["messages", "updates"],
+            config=config,
+            version="v2",
+        ):
+            if isinstance(chunk, dict):
+                typ = chunk.get("type", "")
+                data = chunk.get("data")
+            elif isinstance(chunk, (list, tuple)) and len(chunk) >= 2:
+                typ, data = chunk
+            else:
+                continue
 
-            # 遍历节点更新（think 节点在这里）
-            for node_name, node_data in data.items():
-                if not isinstance(node_data, dict):
-                    continue
+            # ==============================================
+            # updates 流：节点更新、用量、中断
+            # ==============================================
+            if typ == "updates" and isinstance(data, dict):
+                if "__interrupt__" in data:
+                    is_thinking = _stop_spinner(thinking, is_thinking)
+                    for intr in data["__interrupt__"]:
+                        return accumulated_usage, intr.value
 
-                # ✅ 提取 AI 回复（从 think 节点的 messages）
-                if "messages" in node_data:
-                    for msg in node_data["messages"]:
-                        # 工具结果由 messages 流处理，跳过
-                        if isinstance(msg, ToolMessage):
-                            continue
-                        if hasattr(msg, "content") and msg.content:
-                            content = msg.content
-                            if isinstance(content, list):
-                                content = "".join(
-                                    block.get("text", "") if isinstance(block, dict) else str(block)
-                                    for block in content
-                                )
-                            # 直接输出文本
+                for node_name, node_data in data.items():
+                    if not isinstance(node_data, dict):
+                        continue
+
+                    if node_name == "think":
+                        if "messages" in node_data and not is_thinking:
+                            thinking.start()
+                            is_thinking = True
+
+                    if node_name == "execute_tools":
+                        is_thinking = _stop_spinner(thinking, is_thinking)
+
+                    if "messages" in node_data:
+                        for msg in node_data["messages"]:
+                            if isinstance(msg, ToolMessage):
+                                continue
+                            if isinstance(msg, AIMessage) and msg.content:
+                                content = msg.content
+                                if isinstance(content, list):
+                                    content = "".join(
+                                        block.get("text", "") if isinstance(block, dict) else str(block)
+                                        for block in content
+                                    )
+                                if content:
+                                    is_thinking = _stop_spinner(thinking, is_thinking)
+                                    format_text({"chunk": content})
+
+                    if "usage" in node_data:
+                        accumulated_usage = node_data["usage"]
+
+            # ==============================================
+            # messages 流：工具调用和结果
+            # ==============================================
+            elif typ == "messages":
+                try:
+                    msg, metadata = data
+                    node = metadata.get("langgraph_node", "")
+
+                    # ── AI 消息：注册工具调用 ──
+                    if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+                        is_thinking = _stop_spinner(thinking, is_thinking)
+
+                        for tc in msg.tool_calls:
+                            tc_id = tc.get("id", "")
+                            tc_name = tc.get("name", "")
+                            tc_args = tc.get("args", {})
+                            if not tc_id or not tc_name:
+                                continue
+
+                            pending_tools[tc_id] = {
+                                "name": tc_name,
+                                "args": tc_args,
+                                "start_time": time.time(),
+                            }
+
+                            label = tool_label(tc_name)
+                            detail = format_tool_call_args(tc_name, tc_args)
+                            if detail:
+                                console.print(f"\n  [blue]▸[/blue] [bold]{label}[/bold] [dim]{detail}[/dim]")
+                            else:
+                                console.print(f"\n  [blue]▸[/blue] [bold]{label}[/bold]")
+
+                        phase_start = time.time()
+
+                    # ── 工具结果：显示完成状态 ──
+                    elif isinstance(msg, ToolMessage):
+                        tc_id = msg.tool_call_id
+                        tool_info = pending_tools.pop(tc_id, {})
+                        tool_name = tool_info.get("name", "") or getattr(msg, "name", "")
+                        elapsed = time.time() - tool_info.get("start_time", phase_start)
+
+                        result_content = msg.content
+                        try:
+                            parsed = json.loads(result_content) if isinstance(result_content, str) else result_content
+                            success = parsed.get("success", True) if isinstance(parsed, dict) else True
+                        except:
+                            success = True
+                            parsed = {}
+
+                        icon = "[green]✓[/green]" if success else "[red]✗[/red]"
+                        summary = _build_result_summary(tool_name, parsed if isinstance(parsed, dict) else {})
+                        console.print(f"  {icon} [dim]⏱ {elapsed:.1f}s[/dim] {summary}")
+
+                        if tool_name in ("view_file", "search_code", "run_command", "list_files"):
+                            if success and isinstance(parsed, dict):
+                                format_result_detail(tool_name, parsed)
+
+                    # ── AI 文本回复 ──
+                    elif isinstance(msg, AIMessage) and msg.content:
+                        content = msg.content
+                        if isinstance(content, list):
+                            content = "".join(
+                                block.get("text", "") if isinstance(block, dict) else str(block)
+                                for block in content
+                            )
+                        if content:
+                            is_thinking = _stop_spinner(thinking, is_thinking)
                             format_text({"chunk": content})
+                except Exception as e:
+                    pass
+    finally:
+        is_thinking = _stop_spinner(thinking, is_thinking)
 
-                # ✅ 提取 Token 用量
-                if "usage" in node_data:
-                    accumulated_usage = node_data["usage"]
-
-        # ==============================================
-        # 【保留】messages 流（兼容部分模型）
-        # ==============================================
-        elif typ == "messages":
-            try:
-                msg, metadata = data
-                node = metadata.get("langgraph_node", "")
-
-                # 工具结果：格式化展示，不输出原始 JSON
-                if isinstance(msg, ToolMessage):
-                    tool_name = getattr(msg, "name", "") or ""
-                    format_tool_result({
-                        "tool_call_id": msg.tool_call_id,
-                        "result": msg.content,
-                        "_tool_name": tool_name,
-                        "_elapsed": timer.phase_elapsed(),
-                    })
-                    continue
-
-                # AI 消息：注册工具调用映射，输出文本，开始阶段计时
-                if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
-                    for tc in msg["tool_calls"]:
-                        format_tool_call({
-                            "tool_name": tc.get("name", ""),
-                            "tool_call_id": tc.get("id"),
-                            "args": tc.get("args"),
-                        })
-                    # 开始阶段计时
-                    timer.phase_start()
-
-                content = msg.content
-                if isinstance(content, list):
-                    content = "".join(
-                        block.get("text", "") if isinstance(block, dict) else str(block)
-                        for block in content
-                    )
-                if content and node == "think":
-                    format_text({"chunk": content})
-            except:
-                pass
-
-    # 输出最终用量
-    elapsed = timer.stop()
-    format_usage(accumulated_usage, elapsed)
+    overall_elapsed = time.time() - overall_start
+    format_usage(accumulated_usage, overall_elapsed)
     return accumulated_usage, None
 
 
+def _build_result_summary(tool_name: str, data: dict) -> str:
+    """构建工具结果的一行摘要（Rich markup）。"""
+    if not data:
+        return ""
+
+    success = data.get("success", True)
+    if not success:
+        error = data.get("error", "未知错误")
+        return f"[red]{error[:60]}[/red]"
+
+    parts = []
+
+    if tool_name == "view_file":
+        path = data.get("path", "")
+        total = data.get("total_lines", 0)
+        if path:
+            parts.append(path)
+        if total:
+            parts.append(f"{total} 行")
+
+    elif tool_name == "edit_file":
+        path = data.get("path", "")
+        removed = data.get("lines_removed", 0)
+        added = data.get("lines_added", 0)
+        if path:
+            parts.append(path)
+        parts.append(f"-{removed} +{added}")
+
+    elif tool_name in ("write_file", "create_file"):
+        path = data.get("path", "")
+        size = data.get("bytes_written", 0)
+        if path:
+            parts.append(path)
+        if size:
+            parts.append(f"{size} bytes")
+
+    elif tool_name == "create_directory":
+        path = data.get("path", "")
+        if path:
+            parts.append(path)
+
+    elif tool_name == "search_code":
+        matches = data.get("matches", [])
+        total = data.get("total", len(matches))
+        parts.append(f"{total} 处匹配")
+
+    elif tool_name == "list_files":
+        files = data.get("total_files", 0)
+        dirs = data.get("total_dirs", 0)
+        parts.append(f"{files} 文件, {dirs} 目录")
+
+    elif tool_name == "run_command":
+        exit_code = data.get("exit_code")
+        if exit_code is not None:
+            if exit_code == 0:
+                parts.append("[green]exit 0[/green]")
+            else:
+                parts.append(f"[red]exit {exit_code}[/red]")
+
+    elif tool_name == "git_status":
+        branch = data.get("branch", "")
+        is_clean = data.get("is_clean", False)
+        if branch:
+            parts.append(f"branch: {branch}")
+        if is_clean:
+            parts.append("[green]clean[/green]")
+
+    elif tool_name == "git_diff":
+        has_changes = data.get("has_changes", False)
+        parts.append("有变更" if has_changes else "无变更")
+
+    elif tool_name == "git_log":
+        commits = data.get("commits", [])
+        parts.append(f"{len(commits)} 条提交")
+
+    elif tool_name == "git_commit":
+        hash_val = data.get("hash", "")
+        if hash_val:
+            parts.append(f"commit {hash_val}")
+
+    elif tool_name == "compact":
+        msg = data.get("message", "已压缩")
+        parts.append(msg)
+
+    else:
+        path = data.get("path", "")
+        msg = data.get("message", "")
+        if path:
+            parts.append(path)
+        elif msg:
+            parts.append(msg[:60])
+
+    return " ".join(parts)
+
+
 def _handle_approval(interrupt_data, config, thread_id, project_root):
-    """处理审批中断：显示详情，询问用户，递归恢复流。"""
+    """处理审批中断。"""
     from .approval import show_approval_details
     show_approval_details(interrupt_data)
 
@@ -154,7 +297,6 @@ def _handle_approval(interrupt_data, config, thread_id, project_root):
     approval_str = choice or "rejected"
     console.print(f"  [dim]{'已批准' if approved else '已拒绝'}，继续...[/dim]")
 
-    # 递归处理流（可能再次中断）
     usage, new_interrupt = _process_stream(
         Command(resume=approval_str), config, thread_id, project_root
     )
@@ -240,7 +382,6 @@ def cmd_history(thread_id):
 
 
 def start_chat():
-    # 初始化 readline 历史和 Tab 补全
     setup_readline()
     set_slash_commands(["help", "sessions", "switch", "new", "delete", "history", "clear", "exit", "mode", "plan"])
 
@@ -291,9 +432,7 @@ def start_chat():
                 show_banner()
                 show_session_info(thread_id, project_root)
             elif cmd == "/mode":
-                # 显示当前模式和切换选项
                 console.print(f"[dim]当前权限模式: {permission_mode}[/dim]")
-                console.print(f"[dim]{MODE_DESCRIPTIONS.get(PermissionMode(permission_mode), '')}[/dim]")
                 options = [
                     {"value": m.value, "label": f"{m.value} - {MODE_DESCRIPTIONS.get(m, '')}"}
                     for m in PermissionMode
@@ -307,7 +446,6 @@ def start_chat():
                 if plan_mode:
                     permission_mode = "plan"
                     console.print("[green]已进入计划模式。Agent 将只分析规划，不执行修改。[/green]")
-                    console.print("[dim]再次输入 /plan 或让 agent 调用 exit_plan_mode 退出[/dim]")
                 else:
                     permission_mode = "default"
                     console.print("[green]已退出计划模式。现在可以执行修改操作。[/green]")
@@ -318,7 +456,7 @@ def start_chat():
                 console.print(f"[yellow]未知命令: {cmd}，输入 /help 查看可用命令[/yellow]")
             continue
 
-        # 正常对话：直接调用 agent
+        # 正常对话
         session_manager.create_or_update(thread_id, project_root, title=trimmed[:50])
         config = {"configurable": {"thread_id": thread_id}}
         input_data = {
@@ -339,7 +477,6 @@ def start_chat():
 
 def main():
     start_chat()
-
 
 
 if __name__ == "__main__":

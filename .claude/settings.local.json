@@ -10,7 +10,9 @@
       "WebFetch(domain:langchain-ai.github.io)",
       "WebFetch(domain:pypi.org)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:claudecn.com)"
+      "WebFetch(domain:claudecn.com)",
+      "Bash(del E:\\\\work\\\\ecode\\\\debug_stream.py E:\\\\work\\\\ecode\\\\debug_stream2.py E:\\\\work\\\\ecode\\\\debug_stream3.py)",
+      "Bash(del E:\\\\work\\\\ecode\\\\test_cli.py)"
     ]
   }
 }

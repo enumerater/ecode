@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from rich.console import Console
 from rich.panel import Panel
 
-console = Console()
+console = Console(force_terminal=True)
 
 
 class TimerDisplay:
@@ -40,6 +40,22 @@ TOOL_LABELS = {
     "search_code": "搜索代码",
     "list_files": "列出文件",
     "run_command": "执行命令",
+    "compact": "压缩上下文",
+    "get_tool_details": "查看工具详情",
+    "git_status": "Git 状态",
+    "git_diff": "Git 差异",
+    "git_log": "Git 日志",
+    "git_commit": "Git 提交",
+    "git_blame": "Git 追溯",
+    "save_memory": "保存记忆",
+    "list_memories": "列出记忆",
+    "enter_plan_mode": "进入计划模式",
+    "exit_plan_mode": "退出计划模式",
+    "run_agent": "子 Agent",
+    "create_background_task": "创建后台任务",
+    "get_task_status": "查看任务状态",
+    "list_background_tasks": "列出后台任务",
+    "kill_background_task": "终止后台任务",
 }
 
 # tool_call_id -> tool_name 映射
