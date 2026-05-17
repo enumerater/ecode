@@ -11,7 +11,7 @@ from langgraph.graph.message import add_messages
 from langgraph.types import interrupt
 
 from model import llm
-from session import checkpointer
+from session import get_checkpointer
 from tools import ALL_TOOLS, SAFE_TOOLS, DANGEROUS_TOOLS, TOOL_META, set_project_root
 from tools.context_tools import COMPACT_SIGNAL
 from tools.tool_index import build_tool_index
@@ -443,4 +443,4 @@ def build_graph():
         END: END,
     })
 
-    return g.compile(checkpointer=checkpointer)
+    return g.compile(checkpointer=get_checkpointer())

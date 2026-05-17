@@ -12,7 +12,7 @@ from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 from langgraph.types import Command
 
 from agent import build_graph
-from session import session_manager
+from session import get_session_manager, switch_storage, get_storage_backend, SUPPORTED_BACKENDS
 from permissions.modes import PermissionMode, MODE_DESCRIPTIONS
 from .interactions import prompt_input, select_one, confirm, setup_readline, set_slash_commands
 from .display import (
@@ -33,6 +33,11 @@ def get_graph():
     if _graph is None:
         _graph = build_graph()
     return _graph
+
+
+def reset_graph():
+    global _graph
+    _graph = None
 
 
 def _process_stream(input_data, config, thread_id, project_root):
@@ -298,7 +303,7 @@ def _handle_approval(interrupt_data, config, thread_id, project_root):
 
 def cmd_sessions():
     try:
-        sessions = session_manager.list_sessions()
+        sessions = get_session_manager().list_sessions()
         if not sessions:
             console.print("[dim]没有会话记录。[/dim]")
             return
@@ -314,7 +319,7 @@ def cmd_sessions():
 
 
 def cmd_switch():
-    sessions = session_manager.list_sessions()
+    sessions = get_session_manager().list_sessions()
     if not sessions:
         console.print("[dim]没有会话记录。[/dim]")
         return None
@@ -326,7 +331,7 @@ def cmd_switch():
 
 
 def cmd_delete(current_id):
-    sessions = session_manager.list_sessions()
+    sessions = get_session_manager().list_sessions()
     if not sessions:
         console.print("[dim]没有会话记录。[/dim]")
         return False
@@ -340,7 +345,7 @@ def cmd_delete(current_id):
     if not confirm("确认删除？", default=False):
         console.print("[dim]已取消[/dim]")
         return False
-    session_manager.delete_session(choice)
+    get_session_manager().delete_session(choice)
     console.print("[green]会话已删除。[/green]")
     return choice == current_id
 
@@ -348,7 +353,7 @@ def cmd_delete(current_id):
 def cmd_history(thread_id):
     try:
         graph = get_graph()
-        messages = session_manager.get_history(thread_id, graph)
+        messages = get_session_manager().get_history(thread_id, graph)
         if not messages:
             console.print("[dim]没有消息记录。[/dim]")
             return
@@ -371,7 +376,7 @@ def cmd_history(thread_id):
 
 def start_chat():
     setup_readline()
-    set_slash_commands(["help", "sessions", "switch", "new", "delete", "history", "clear", "exit", "mode", "plan"])
+    set_slash_commands(["help", "sessions", "switch", "new", "delete", "history", "clear", "exit", "mode", "plan", "storage"])
 
     show_banner()
 
@@ -380,7 +385,7 @@ def start_chat():
     permission_mode = "default"
     plan_mode = False
 
-    show_session_info(thread_id, project_root)
+    show_session_info(thread_id, project_root, get_storage_backend())
 
     while True:
         user_input = prompt_input(">")
@@ -405,20 +410,20 @@ def start_chat():
                     console.print(f"[dim]当前会话: {thread_id[:8]}[/dim]")
             elif cmd == "/new":
                 thread_id = str(uuid.uuid4())
-                session_manager.create_or_update(thread_id, project_root)
+                get_session_manager().create_or_update(thread_id, project_root)
                 console.print(f"[green]新会话: {thread_id[:8]}[/green]")
             elif cmd == "/delete":
                 deleted = cmd_delete(thread_id)
                 if deleted:
                     thread_id = str(uuid.uuid4())
-                    session_manager.create_or_update(thread_id, project_root)
+                    get_session_manager().create_or_update(thread_id, project_root)
                     console.print(f"[dim]已自动创建新会话: {thread_id[:8]}[/dim]")
             elif cmd == "/history":
                 cmd_history(thread_id)
             elif cmd == "/clear":
                 console.clear()
                 show_banner()
-                show_session_info(thread_id, project_root)
+                show_session_info(thread_id, project_root, get_storage_backend())
             elif cmd == "/mode":
                 console.print(f"[dim]当前权限模式: {permission_mode}[/dim]")
                 options = [
@@ -437,6 +442,22 @@ def start_chat():
                 else:
                     permission_mode = "default"
                     console.print("[green]已退出计划模式。现在可以执行修改操作。[/green]")
+            elif cmd == "/storage":
+                current = get_storage_backend()
+                console.print(f"[dim]当前存储后端: {current}[/dim]")
+                options = [
+                    {"value": b, "label": f"{b}{'  (当前)' if b == current else ''}"}
+                    for b in SUPPORTED_BACKENDS
+                ]
+                new_backend = select_one(options, "选择存储后端：")
+                if new_backend and new_backend != current:
+                    try:
+                        switch_storage(new_backend)
+                        reset_graph()  # 重置 graph，下次调用时用新 checkpointer 重新编译
+                        console.print(f"[green]已切换到: {new_backend}[/green]")
+                        console.print("[dim]注意：切换后之前的会话数据在新后端中不可见[/dim]")
+                    except ConnectionError as e:
+                        console.print(f"[red]{e}[/red]")
             elif cmd == "/exit":
                 console.print("再见！")
                 break
@@ -445,7 +466,7 @@ def start_chat():
             continue
 
         # 正常对话
-        session_manager.create_or_update(thread_id, project_root, title=trimmed[:50])
+        get_session_manager().create_or_update(thread_id, project_root, title=trimmed[:50])
         config = {"configurable": {"thread_id": thread_id}}
         input_data = {
             "messages": [HumanMessage(content=trimmed)],

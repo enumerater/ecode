@@ -205,8 +205,8 @@ def show_banner():
     console.print()
 
 
-def show_session_info(thread_id, project_root):
-    console.print(f"[dim]会话: {thread_id[:8]}  项目: {project_root}[/dim]")
+def show_session_info(thread_id, project_root, storage_backend="memory"):
+    console.print(f"[dim]会话: {thread_id[:8]}  项目: {project_root}  存储: {storage_backend}[/dim]")
     console.print("[dim]输入 /help 查看可用命令[/dim]\n")
 
 
@@ -220,6 +220,7 @@ def show_help():
         ("/history", "查看当前会话历史"),
         ("/mode", "切换权限模式"),
         ("/plan", "切换计划模式"),
+        ("/storage", "切换存储后端 (memory/mysql)"),
         ("/clear", "清屏"),
         ("/exit", "退出"),
     ]

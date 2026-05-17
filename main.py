@@ -9,7 +9,7 @@ from langgraph.types import Command
 
 from agent import build_graph
 from schemas import ChatRequest, ResumeRequest
-from session import session_manager
+from session import get_session_manager
 from utils.sse import sse
 
 app = FastAPI(title="AI Coding Agent")
@@ -115,7 +115,7 @@ async def stream_graph(input_data, config: dict):
 @app.post("/api/chat/stream")
 async def chat_stream(req: ChatRequest):
     config = {"configurable": {"thread_id": req.thread_id}}
-    session_manager.create_or_update(
+    get_session_manager().create_or_update(
         req.thread_id, req.project_root, title=req.prompt[:50]
     )
 
@@ -134,12 +134,12 @@ async def chat_stream(req: ChatRequest):
 
 @app.post("/api/chat/resume")
 async def chat_resume(req: ResumeRequest):
-    session = session_manager.get_session(req.thread_id)
+    session = get_session_manager().get_session(req.thread_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
     config = {"configurable": {"thread_id": req.thread_id}}
-    session_manager.create_or_update(req.thread_id, session["project_root"])
+    get_session_manager().create_or_update(req.thread_id, session["project_root"])
 
     return StreamingResponse(
         stream_graph(Command(resume=req.approval), config),
@@ -151,14 +151,14 @@ async def chat_resume(req: ResumeRequest):
 
 @app.get("/api/sessions")
 async def list_sessions():
-    return session_manager.list_sessions()
+    return get_session_manager().list_sessions()
 
 
 # ─── DELETE /api/sessions/{thread_id} ───
 
 @app.delete("/api/sessions/{thread_id}")
 async def delete_session(thread_id: str):
-    if not session_manager.delete_session(thread_id):
+    if not get_session_manager().delete_session(thread_id):
         raise HTTPException(status_code=404, detail="Session not found")
     return {"status": "ok"}
 
@@ -167,10 +167,10 @@ async def delete_session(thread_id: str):
 
 @app.get("/api/sessions/{thread_id}/history")
 async def get_history(thread_id: str):
-    session = session_manager.get_session(thread_id)
+    session = get_session_manager().get_session(thread_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    return session_manager.get_history(thread_id, graph)
+    return get_session_manager().get_history(thread_id, graph)
 
 
 if __name__ == "__main__":
