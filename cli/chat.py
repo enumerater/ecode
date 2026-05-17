@@ -14,7 +14,7 @@ from langgraph.types import Command
 from agent import build_graph
 from session import get_session_manager, switch_storage, get_storage_backend, SUPPORTED_BACKENDS
 from permissions.modes import PermissionMode, MODE_DESCRIPTIONS
-from .interactions import prompt_input, select_one, confirm, setup_readline, set_slash_commands
+from .interactions import prompt_input, select_one, confirm, set_slash_commands
 from .display import (
     show_banner, show_session_info, show_help,
     format_text, format_usage, format_error, format_time,
@@ -498,7 +498,6 @@ def _check_first_run():
 
 
 def start_chat():
-    setup_readline()
     set_slash_commands(["help", "init", "sessions", "switch", "new", "delete", "history", "clear", "exit", "mode", "plan", "storage"])
 
     _check_first_run()

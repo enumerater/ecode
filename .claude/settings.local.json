@@ -15,7 +15,8 @@
       "Bash(del E:\\\\work\\\\ecode\\\\test_cli.py)",
       "Bash(del E:\\\\work\\\\ecode\\\\test_e2e.py)",
       "Bash(dir \"E:\\\\work\\\\ecode\" /b)",
-      "Bash(git mv *)"
+      "Bash(git mv *)",
+      "Bash(git log *)"
     ]
   }
 }

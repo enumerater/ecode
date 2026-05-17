@@ -12,4 +12,4 @@ python-dotenv
 # CLI dependencies
 rich
 pyyaml
-pyreadline3
+prompt_toolkit>=3.0

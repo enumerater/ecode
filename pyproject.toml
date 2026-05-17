@@ -24,7 +24,7 @@ dependencies = [
     # CLI
     "rich",
     "pyyaml",
-    "pyreadline3",
+    "prompt_toolkit>=3.0",
 ]
 
 [project.scripts]
