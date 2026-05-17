@@ -5,11 +5,33 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ecode"
 version = "1.0.0"
+description = "基于 LLM 的 AI 编程助手，通过自然语言读取、搜索、编辑文件和执行命令"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
 dependencies = [
-    "rich",
+    # Backend
+    "fastapi",
+    "uvicorn",
+    "langchain",
     "langchain-core",
+    "langchain-openai",
     "langgraph",
+    "langgraph-checkpoint-mysql",
+    "pymysql",
+    "pydantic",
+    "python-dotenv",
+    # CLI
+    "rich",
+    "pyyaml",
+    "pyreadline3",
 ]
 
 [project.scripts]
 ecode = "cli.chat:main"
+
+[tool.setuptools.packages.find]
+include = ["cli*", "tools*", "memory*", "hooks*", "permissions*", "tasks*", "utils*", "context*"]
+
+[tool.setuptools]
+py-modules = ["agent", "model", "session", "schemas", "settings", "context_manager", "project_context"]

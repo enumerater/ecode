@@ -14,7 +14,8 @@
       "Bash(del E:\\\\work\\\\ecode\\\\debug_stream.py E:\\\\work\\\\ecode\\\\debug_stream2.py E:\\\\work\\\\ecode\\\\debug_stream3.py)",
       "Bash(del E:\\\\work\\\\ecode\\\\test_cli.py)",
       "Bash(del E:\\\\work\\\\ecode\\\\test_e2e.py)",
-      "Bash(dir \"E:\\\\work\\\\ecode\" /b)"
+      "Bash(dir \"E:\\\\work\\\\ecode\" /b)",
+      "Bash(git mv *)"
     ]
   }
 }

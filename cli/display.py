@@ -213,6 +213,7 @@ def show_session_info(thread_id, project_root, storage_backend="memory"):
 def show_help():
     cmds = [
         ("/help", "显示此帮助"),
+        ("/init", "初始化配置（LLM 提供商设置）"),
         ("/sessions", "列出所有会话"),
         ("/switch", "切换会话"),
         ("/new", "新建会话"),

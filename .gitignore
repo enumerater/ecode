@@ -1,4 +1,5 @@
 .env
+config.yaml
 .idea/
 __pycache__/
 *.pyc

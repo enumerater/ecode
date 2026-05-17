@@ -10,7 +10,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.types import interrupt
 
-from model import llm
+# llm 延迟导入，避免未配置时 import 失败
 from session import get_checkpointer
 from tools import ALL_TOOLS, SAFE_TOOLS, DANGEROUS_TOOLS, TOOL_META, set_project_root
 from tools.context_tools import COMPACT_SIGNAL
@@ -107,7 +107,15 @@ def _build_immutable_context(project_root: str) -> str:
 
     return "\n\n---\n\n".join(sections)
 
-tool_llm = llm.bind_tools(ALL_TOOLS)
+_tool_llm = None
+
+
+def _get_tool_llm():
+    global _tool_llm
+    if _tool_llm is None:
+        from model import llm
+        _tool_llm = llm.bind_tools(ALL_TOOLS)
+    return _tool_llm
 
 
 class State(TypedDict):
@@ -153,6 +161,7 @@ def _is_transient_api_error(error: Exception) -> bool:
 
 
 def think(state: State) -> dict:
+    from model import llm
     messages = list(state["messages"])
     original_msg_count = len(messages)
 
@@ -201,7 +210,7 @@ def think(state: State) -> dict:
         full_messages = [SystemMessage(content=immutable_ctx)] + messages
 
     try:
-        response = tool_llm.invoke(full_messages)
+        response = _get_tool_llm().invoke(full_messages)
     except Exception as e:
         # ── 错误恢复：prompt-too-long → Reactive Compact 重试 ──
         if _is_prompt_too_long_error(e):
@@ -213,7 +222,7 @@ def think(state: State) -> dict:
                 # 重试 LLM 调用
                 full_messages = [SystemMessage(content=immutable_ctx)] + compacted_messages
                 try:
-                    response = tool_llm.invoke(full_messages)
+                    response = _get_tool_llm().invoke(full_messages)
                 except Exception as retry_e:
                     logger.error(f"Reactive Compact 重试失败: {retry_e}")
                     result["messages"] = [AIMessage(content=f"抱歉，上下文过长且压缩后仍无法处理: {retry_e}")]

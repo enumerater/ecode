@@ -371,12 +371,135 @@ def cmd_history(thread_id):
         console.print(f"[red]获取历史失败: {err}[/red]")
 
 
+# --- /init 配置引导 ---
+
+
+_PRESETS = {
+    "deepseek": {
+        "label": "DeepSeek",
+        "model": "deepseek-chat",
+        "base_url": "https://api.deepseek.com/v1",
+    },
+    "ali": {
+        "label": "阿里通义 (Qwen)",
+        "model": "qwen-plus",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    },
+    "openai": {
+        "label": "OpenAI",
+        "model": "gpt-4o",
+        "base_url": "https://api.openai.com/v1",
+    },
+}
+
+_API_KEY_ENV = "ECODE_API_KEY"
+
+
+def cmd_init():
+    """交互式配置引导，生成 .env 和 config.yaml。"""
+    import os
+
+    console.print(Panel("[bold]ecode 初始配置[/bold]", style="cyan", expand=False))
+    console.print("选择 LLM 提供商：\n")
+
+    options = [
+        {"value": k, "label": f"{v['label']}  ({v['model']})"}
+        for k, v in _PRESETS.items()
+    ]
+    options.append({"value": "custom", "label": "自定义 (OpenAI 兼容接口)"})
+
+    choice = select_one(options, "选择提供商：")
+    if not choice:
+        console.print("[dim]已取消[/dim]")
+        return False
+
+    if choice == "custom":
+        console.print("\n[dim]请输入自定义配置：[/dim]")
+        base_url = prompt_input("API Base URL (如 https://api.example.com/v1)")
+        if not base_url:
+            console.print("[red]Base URL 不能为空[/red]")
+            return False
+        model = prompt_input("模型名称 (如 gpt-4o)")
+        if not model:
+            console.print("[red]模型名称不能为空[/red]")
+            return False
+        label = "自定义"
+    else:
+        preset = _PRESETS[choice]
+        base_url = preset["base_url"]
+        model = preset["model"]
+        label = preset["label"]
+
+    console.print(f"\n[dim]提供商: {label}[/dim]")
+    console.print(f"[dim]模型: {model}[/dim]")
+    console.print(f"[dim]地址: {base_url}[/dim]\n")
+
+    api_key = prompt_input(f"请输入 API Key")
+    if not api_key:
+        console.print("[red]API Key 不能为空[/red]")
+        return False
+
+    # 生成文件路径
+    project_root = os.getcwd()
+    env_path = os.path.join(project_root, ".env")
+    config_path = os.path.join(project_root, "config.yaml")
+
+    # 写 .env
+    env_content = f"{_API_KEY_ENV}={api_key}\n"
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.write(env_content)
+
+    # 写 config.yaml
+    config_content = f"""# ecode 配置文件
+# 由 /init 命令自动生成，可手动编辑
+
+llm:
+  active: "{choice if choice != 'custom' else 'custom'}"
+  configs:
+    {"custom" if choice == "custom" else choice}:
+      provider: openai
+      model: {model}
+      api_key_env: {_API_KEY_ENV}
+      base_url: {base_url}
+      temperature: 0
+      streaming: true
+      stream_usage: true
+"""
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.write(config_content)
+
+    console.print(f"\n[green]配置完成！[/green]")
+    console.print(f"  已生成 [cyan].env[/cyan] 和 [cyan]config.yaml[/cyan]")
+    console.print(f"\n[dim]请重启 ecode 使配置生效。[/dim]")
+    return True
+
+
+def _check_first_run():
+    """首次运行检测：无配置时自动触发 /init。"""
+    import os
+    from model import has_llm_config
+
+    if has_llm_config():
+        return
+
+    console.print("[yellow]未检测到 LLM 配置，进入初始设置...[/yellow]\n")
+    if cmd_init():
+        console.print("\n[dim]配置完成，请重启 ecode。[/dim]")
+        raise SystemExit(0)
+    else:
+        console.print("[red]未完成配置，ecode 无法启动。[/red]")
+        console.print("[dim]你可以手动创建 config.yaml（参考 config.yaml.example）或设置环境变量。[/dim]")
+        raise SystemExit(1)
+
+
 # --- Main entry point ---
 
 
 def start_chat():
     setup_readline()
-    set_slash_commands(["help", "sessions", "switch", "new", "delete", "history", "clear", "exit", "mode", "plan", "storage"])
+    set_slash_commands(["help", "init", "sessions", "switch", "new", "delete", "history", "clear", "exit", "mode", "plan", "storage"])
+
+    _check_first_run()
 
     show_banner()
 
@@ -401,6 +524,9 @@ def start_chat():
             cmd = trimmed.split()[0].lower()
             if cmd == "/help":
                 show_help()
+            elif cmd == "/init":
+                if cmd_init():
+                    console.print("[dim]请重启 ecode 使新配置生效[/dim]")
             elif cmd == "/sessions":
                 cmd_sessions()
             elif cmd == "/switch":

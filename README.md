@@ -9,7 +9,7 @@
 - **命令执行** -- 在项目目录中运行 shell 命令
 - **安全审批机制** -- 危险操作（编辑、写入、执行命令）需用户确认后才执行
 - **三层上下文压缩** -- 自动管理长对话上下文，保持在 token 限制内
-- **会话管理** -- 支持多会话切换，MySQL 持久化存储
+- **会话管理** -- 支持多会话切换，内存/MySQL 双存储后端
 - **项目上下文** -- 通过项目根目录的 `ecode.md` 文件注入自定义编码规范
 - **多模型支持** -- 通过 `config.yaml` 一键切换 LLM 提供商
 - **SSE 流式响应** -- 实时返回 AI 文本、工具调用和结果
@@ -19,57 +19,50 @@
 ### 环境要求
 
 - Python 3.10+
-- MySQL 服务
 - 至少一个 LLM 提供商的 API Key
 
 ### 安装
 
 ```bash
-pip install -r requirements.txt
-```
-
-可选：以开发模式安装 CLI 命令
-
-```bash
+git clone <repo-url> ecode
+cd ecode
 pip install -e .
 ```
 
-### 配置
+### 配置（首次运行自动引导）
 
-1. 创建 `.env` 文件，填入 API Key 和数据库密码：
+直接启动 CLI，首次运行会自动进入交互式配置：
 
-```env
-ALI=<阿里云 API Key>
-MIMO=<小米 MiMo API Key>
-SHANG_TANG=<商汤 API Key>
-ECODE_DB_PASSWORD=<MySQL 密码>
+```bash
+ecode
 ```
 
-2. 编辑 `config.yaml`，配置数据库连接和 LLM 模型：
+引导流程会让你选择 LLM 提供商（DeepSeek / 阿里通义 / OpenAI / 自定义）并输入 API Key，自动生成 `.env` 和 `config.yaml`。
 
-```yaml
-backend:
-  url: "http://127.0.0.1:8000"
+也可以手动配置：
 
-database:
-  host: "127.0.0.1"
-  port: 3306
-  user: "root"
-  password_env: "ECODE_DB_PASSWORD"
-  database: "ecode"
+```bash
+# 方式一：环境变量（最简）
+export ECODE_API_KEY="your-api-key"
+export ECODE_MODEL="deepseek-chat"
+export ECODE_BASE_URL="https://api.deepseek.com/v1"
 
-llm:
-  active: "shang_tang"  # 可选: shang_tang / ali / mimo
-  configs:
-    shang_tang:
-      provider: "sensenova"
-      model: "deepseek-v4-flash"
-      # ...
+# 方式二：config.yaml（参考 config.yaml.example）
+cp config.yaml.example config.yaml
+# 编辑 config.yaml，填入 api_key_env 和对应环境变量
 ```
 
 ### 启动
 
-**后端 API 服务：**
+**CLI 终端：**
+
+```bash
+ecode
+# 或
+python -m cli.chat
+```
+
+**后端 API 服务（可选）：**
 
 ```bash
 python main.py
@@ -77,26 +70,33 @@ python main.py
 
 服务启动于 `0.0.0.0:8000`。
 
-**CLI 终端：**
-
-```bash
-python ecode_cli.py
-# 或
-ecode  # pip install -e . 后可用
-```
-
 ## CLI 命令
 
 | 命令 | 说明 |
 |------|------|
 | `/help` | 显示帮助信息 |
+| `/init` | 重新初始化配置（LLM 提供商设置） |
 | `/sessions` | 列出所有会话 |
 | `/switch` | 切换会话 |
 | `/new` | 创建新会话 |
 | `/delete` | 删除会话 |
 | `/history` | 查看当前会话历史 |
+| `/mode` | 切换权限模式 |
+| `/plan` | 切换计划模式 |
+| `/storage` | 切换存储后端 (memory/mysql) |
 | `/clear` | 清屏 |
 | `/exit` | 退出 |
+
+## 存储后端
+
+默认使用**内存存储**，无需任何数据库配置。会话数据在进程内保存，重启后丢失。
+
+如需持久化，可切换到 **MySQL**：
+
+1. 安装并启动 MySQL
+2. 在 `config.yaml` 中配置 database 部分（参考 `config.yaml.example`）
+3. 设置环境变量 `ECODE_DB_PASSWORD`
+4. 运行 `/storage` 命令切换到 mysql
 
 ## API 接口
 
@@ -113,37 +113,24 @@ ecode  # pip install -e . 后可用
 ```
 ├── main.py                 # FastAPI 入口，API 路由，SSE 流式响应
 ├── agent.py                # LangGraph Agent 核心：状态定义、节点逻辑、图构建
-├── model.py                # LLM 工厂：读取 config.yaml，创建 ChatOpenAI 实例
+├── model.py                # LLM 工厂：config.yaml 或环境变量，延迟初始化
+├── session.py              # 双存储后端：内存/MySQL，运行时可切换
 ├── schemas.py              # Pydantic 请求/响应模型
-├── session.py              # MySQL 会话管理 + LangGraph 检查点存储
 ├── context_manager.py      # 三层上下文压缩（微压缩、自动压缩、手动压缩）
 ├── project_context.py      # 加载并缓存 ecode.md 项目上下文
-├── config.yaml             # 主配置文件
-├── requirements.txt        # Python 依赖
-├── pyproject.toml          # 构建配置，CLI 入口注册
-├── ecode_cli.py            # CLI 入口脚本
+├── config.yaml.example     # 配置模板
 ├── tools/
-│   ├── __init__.py         # 工具注册、安全/危险分类、路径解析
 │   ├── file_tools.py       # 文件操作工具
 │   ├── search_tools.py     # 搜索工具（正则搜索、目录列表）
 │   ├── command_tools.py    # 命令执行工具
-│   ├── context_tools.py    # 上下文压缩工具
+│   ├── git_tools.py        # Git 工具
 │   └── tool_index.py       # 工具索引表
 ├── cli/
-│   ├── chat.py             # CLI 主循环：输入处理、流处理、审批流
+│   ├── chat.py             # CLI 主循环：输入处理、流处理、审批流、/init 引导
 │   ├── display.py          # Rich 终端显示格式化
-│   ├── interactions.py     # 交互组件：补全、选择菜单、确认对话框
-│   └── approval.py         # 审批详情面板
-└── utils/
-    └── sse.py              # SSE 事件格式化工具
+│   └── interactions.py     # 交互组件：补全、选择菜单、确认对话框
+└── memory/                 # 记忆系统：文件级持久化
 ```
-
-## 工具安全分类
-
-| 类型 | 工具 | 说明 |
-|------|------|------|
-| 安全（自动执行） | `view_file` `search_code` `list_files` `compact` `get_tool_details` | 只读操作，无需用户确认 |
-| 危险（需审批） | `edit_file` `write_file` `create_file` `create_directory` `run_command` | 写入操作，需用户确认 |
 
 ## 自定义项目上下文
 
