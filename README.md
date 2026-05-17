@@ -138,4 +138,4 @@ python main.py
 
 ## 架构文档
 
-详细的架构设计文档见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+详细的架构设计文档见 [ecode-architecture-complete.md](docs/ecode-architecture-complete.md)。
