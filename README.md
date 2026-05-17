@@ -1,18 +1,38 @@
-# ecode
+<div align="center">
 
-一个基于 LLM 的 AI 编程助手，能够通过自然语言直接读取、搜索、编辑文件，以及执行终端命令。提供 REST API 后端和 CLI 终端两种交互方式。
+# 🧠 ecode
 
-## 特性
+**AI 编程助手 · 用自然语言操作你的代码**
 
-- **对话式编程** -- 用自然语言描述需求，AI 自动完成代码编写和修改
-- **文件操作** -- 查看、搜索（正则）、编辑、创建文件和目录
-- **命令执行** -- 在项目目录中运行 shell 命令
-- **安全审批机制** -- 危险操作（编辑、写入、执行命令）需用户确认后才执行
-- **三层上下文压缩** -- 自动管理长对话上下文，保持在 token 限制内
-- **会话管理** -- 支持多会话切换，内存/MySQL 双存储后端
-- **项目上下文** -- 通过项目根目录的 `ecode.md` 文件注入自定义编码规范
-- **多模型支持** -- 通过 `config.yaml` 一键切换 LLM 提供商
-- **SSE 流式响应** -- 实时返回 AI 文本、工具调用和结果
+[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-✓-green.svg)](https://github.com/langchain-ai/langgraph)
+[![FastAPI](https://img.shields.io/badge/FastAPI-✓-teal.svg)](https://fastapi.tiangolo.com/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</div>
+
+ecode 是一个基于 **LangGraph** 构建的 AI 编码助手，让 LLM 通过工具直接操作你的项目文件系统。只需用自然语言描述需求，AI 就能自动完成代码编写、文件编辑、命令执行等操作。提供 **REST API 后端** 和 **CLI 终端** 两种交互方式。
+
+## ✨ 特性
+
+| 特性 | 说明 |
+|------|------|
+| 🗣️ **对话式编程** | 用自然语言描述需求，AI 自动完成代码编写和修改 |
+| 📁 **文件操作** | 查看、搜索（正则）、编辑、创建文件和目录 |
+| 🖥️ **命令执行** | 在项目目录中运行 shell 命令 |
+| 🔒 **安全审批机制** | 危险操作（编辑、写入、执行命令）需用户确认后才执行 |
+| 📦 **三层上下文压缩** | 微压缩 → 自动摘要 → 手动压缩，自动管理长对话上下文 |
+| 💬 **会话管理** | 支持多会话切换，内存/MySQL 双存储后端 |
+| 📐 **项目上下文** | 通过 `ecode.md` 文件注入自定义编码规范 |
+| 🔄 **多模型支持** | 通过 `config.yaml` 一键切换 LLM 提供商（DeepSeek / 阿里通义 / OpenAI / 自定义） |
+| ⚡ **SSE 流式响应** | 实时返回 AI 文本、工具调用和结果 |
+| 🧠 **记忆系统** | 跨会话持久化知识（用户级 + 项目级） |
+| 🛡️ **权限控制** | 4 种模式（Default / Plan / Auto-approve / YOLO）+ 可编程规则引擎 |
+| 🔧 **Hook 系统** | 生命周期钩子（PreToolUse / PostToolUse 等） |
+| 📋 **后台任务** | 异步执行长时间运行的命令 |
+| 🎯 **Plan 模式** | 先分析规划，再执行修改 |
+| 🧩 **子 Agent** | 派生只读子 agent 执行聚焦分析 |
+| 🪝 **Git 集成** | status / diff / log / commit / blame
 
 ## 快速开始
 
@@ -28,6 +48,9 @@ git clone <repo-url> ecode
 cd ecode
 pip install -e .
 ```
+
+### 配置环境变量
+将项目根目录放入PATH环境变量中。
 
 ### 配置（首次运行自动引导）
 
