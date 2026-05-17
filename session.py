@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def _load_db_config() -> dict:
     """从 config.yaml 读取 database 配置，文件不存在返回空字典。"""
-    config_path = os.path.join(os.getcwd(), "config.yaml")
+    config_path = os.path.join(os.getcwd(), ".ecode", "config.yaml")
     if not os.path.exists(config_path):
         return {}
     with open(config_path, "r", encoding="utf-8") as f:
@@ -261,7 +261,7 @@ class StorageState:
 
         db_cfg = _load_db_config()
         if not db_cfg:
-            raise ValueError("未找到数据库配置。请在 config.yaml 中配置 database 部分（参考 config.yaml.example）")
+            raise ValueError("未找到数据库配置。请在 .ecode/config.yaml 中配置 database 部分（参考 config.yaml.example）")
         self._mysql_cp_conn = _get_pymysql_conn(db_cfg)
         self.checkpointer = PyMySQLSaver(self._mysql_cp_conn)
         self.checkpointer.setup()

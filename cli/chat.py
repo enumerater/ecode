@@ -441,8 +441,10 @@ def cmd_init():
 
     # 生成文件路径
     project_root = os.getcwd()
-    env_path = os.path.join(project_root, ".env")
-    config_path = os.path.join(project_root, "config.yaml")
+    ecode_dir = os.path.join(project_root, ".ecode")
+    os.makedirs(ecode_dir, exist_ok=True)
+    env_path = os.path.join(ecode_dir, ".env")
+    config_path = os.path.join(ecode_dir, "config.yaml")
 
     # 写 .env
     env_content = f"{_API_KEY_ENV}={api_key}\n"
@@ -469,7 +471,7 @@ llm:
         f.write(config_content)
 
     console.print(f"\n[green]配置完成！[/green]")
-    console.print(f"  已生成 [cyan].env[/cyan] 和 [cyan]config.yaml[/cyan]")
+    console.print(f"  已生成 [cyan].ecode/.env[/cyan] 和 [cyan].ecode/config.yaml[/cyan]")
     console.print(f"\n[dim]请重启 ecode 使配置生效。[/dim]")
     return True
 
@@ -488,7 +490,7 @@ def _check_first_run():
         raise SystemExit(0)
     else:
         console.print("[red]未完成配置，ecode 无法启动。[/red]")
-        console.print("[dim]你可以手动创建 config.yaml（参考 config.yaml.example）或设置环境变量。[/dim]")
+        console.print("[dim]你可以手动创建 .ecode/config.yaml（参考 config.yaml.example）或设置环境变量。[/dim]")
         raise SystemExit(1)
 
 

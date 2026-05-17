@@ -5,12 +5,13 @@
 """
 import os
 from dotenv import load_dotenv
-load_dotenv(os.path.join(os.getcwd(), ".env"))
+
+_ECODE_DIR = os.path.join(os.getcwd(), ".ecode")
+_CONFIG_PATH = os.path.join(_ECODE_DIR, "config.yaml")
+load_dotenv(os.path.join(_ECODE_DIR, ".env"))
 
 import yaml
 from langchain_openai import ChatOpenAI
-
-_CONFIG_PATH = os.path.join(os.getcwd(), "config.yaml")
 
 
 def _load_config_yaml() -> dict | None:
@@ -62,7 +63,7 @@ def load_llm_config() -> dict:
         "未找到 LLM 配置。请执行以下操作之一：\n"
         "  1. 运行 /init 命令进行交互式配置\n"
         "  2. 设置环境变量: ECODE_API_KEY, ECODE_MODEL, ECODE_BASE_URL\n"
-        "  3. 创建 config.yaml（参考 config.yaml.example）"
+        "  3. 创建 .ecode/config.yaml（参考 config.yaml.example）"
     )
 
 

@@ -1,5 +1,6 @@
 .env
 config.yaml
+.ecode/
 .idea/
 __pycache__/
 *.pyc
