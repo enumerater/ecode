@@ -10,11 +10,13 @@ from tools.memory_tools import save_memory, list_memories
 from tools.plan_tools import enter_plan_mode, exit_plan_mode
 from tools.agent_tool import run_agent
 from tools.task_tools import create_background_task, get_task_status, list_background_tasks, kill_background_task
+from tools.task_plan_tools import create_task, update_task, list_tasks
+from tools.ask_user_question_tool import ask_user_question
 
 # ── 工具分类集合（向后兼容）──
-SAFE_TOOLS = {"view_file", "search_code", "list_files", "compact", "get_tool_details", "git_status", "git_diff", "git_log", "git_blame", "save_memory", "list_memories", "get_task_status", "list_background_tasks"}
-DANGEROUS_TOOLS = {"edit_file", "write_file", "create_file", "create_directory", "run_command", "git_commit", "enter_plan_mode", "exit_plan_mode", "run_agent", "create_background_task", "kill_background_task"}
-ALL_TOOLS = [view_file, edit_file, write_file, create_file, create_directory, search_code, list_files, run_command, compact, get_tool_details, git_status, git_diff, git_log, git_commit, git_blame, save_memory, list_memories, enter_plan_mode, exit_plan_mode, run_agent, create_background_task, get_task_status, list_background_tasks, kill_background_task]
+SAFE_TOOLS = {"view_file", "search_code", "list_files", "compact", "get_tool_details", "git_status", "git_diff", "git_log", "git_blame", "save_memory", "list_memories", "get_task_status", "list_background_tasks", "list_tasks"}
+DANGEROUS_TOOLS = {"edit_file", "write_file", "create_file", "create_directory", "run_command", "git_commit", "enter_plan_mode", "exit_plan_mode", "run_agent", "create_background_task", "kill_background_task", "ask_user_question"}
+ALL_TOOLS = [view_file, edit_file, write_file, create_file, create_directory, search_code, list_files, run_command, compact, get_tool_details, git_status, git_diff, git_log, git_commit, git_blame, save_memory, list_memories, enter_plan_mode, exit_plan_mode, run_agent, create_background_task, get_task_status, list_background_tasks, kill_background_task, create_task, update_task, list_tasks, ask_user_question]
 
 # ── 工具并发元数据 ──
 # is_concurrency_safe: 是否可以与其他工具并发执行（只读、无副作用）
@@ -50,6 +52,12 @@ TOOL_META: dict[str, dict] = {
     "get_task_status":       {"is_concurrency_safe": True,  "is_read_only": True,  "is_destructive": False},
     "list_background_tasks": {"is_concurrency_safe": True,  "is_read_only": True,  "is_destructive": False},
     "kill_background_task":  {"is_concurrency_safe": False, "is_read_only": False, "is_destructive": True},
+    # 任务规划工具
+    "create_task":     {"is_concurrency_safe": False, "is_read_only": False, "is_destructive": False},
+    "update_task":     {"is_concurrency_safe": False, "is_read_only": False, "is_destructive": False},
+    "list_tasks":      {"is_concurrency_safe": True,  "is_read_only": True,  "is_destructive": False},
+    # 用户决策工具
+    "ask_user_question": {"is_concurrency_safe": False, "is_read_only": True, "is_destructive": True},
 }
 
 

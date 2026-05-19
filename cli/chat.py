@@ -14,12 +14,12 @@ from langgraph.types import Command
 from agent import build_graph
 from session import get_session_manager, switch_storage, get_storage_backend, SUPPORTED_BACKENDS
 from permissions.modes import PermissionMode, MODE_DESCRIPTIONS
-from .interactions import prompt_input, select_one, confirm, set_slash_commands, supplement_input
+from .interactions import prompt_input, select_one, confirm, set_slash_commands, supplement_input, select_options
 from .display import (
     show_banner, show_session_info, show_help,
     format_text, format_usage, format_error, format_time,
     tool_label, format_tool_call_args, format_result_detail,
-    _brief_result_summary,
+    _brief_result_summary, show_task_list, show_question_form,
 )
 from .live_status import QuerySpinner, THINKING, TOOL_USE, RESPONDING
 
@@ -48,6 +48,7 @@ def _process_stream(input_data, config, thread_id, project_root):
     spinner = QuerySpinner()
     spinner.start()
     pending_tools = {}
+    last_tasks = None  # 跟踪任务状态变化
 
     try:
         for chunk in graph.stream(
@@ -99,6 +100,17 @@ def _process_stream(input_data, config, thread_id, project_root):
 
                     if "usage" in node_data:
                         accumulated_usage = node_data["usage"]
+
+                    # 检测任务状态变化
+                    if "tasks" in node_data:
+                        new_tasks = node_data["tasks"]
+                        if new_tasks != last_tasks:
+                            last_tasks = new_tasks
+                            spinner.set_task_info(new_tasks)
+                            # 暂停 spinner 显示任务列表
+                            spinner.stop()
+                            show_task_list(new_tasks)
+                            spinner.start()
 
             # ==============================================
             # messages 流：工具调用和结果
@@ -265,6 +277,33 @@ def _build_result_summary(tool_name: str, data: dict) -> str:
         msg = data.get("message", "已压缩")
         parts.append(msg)
 
+    elif tool_name == "create_task":
+        task = data.get("task", {})
+        subject = task.get("subject", "")
+        if subject:
+            parts.append(subject)
+
+    elif tool_name == "update_task":
+        task_id = data.get("task_id", "")
+        status = data.get("status", "")
+        if status:
+            parts.append(f"{task_id} → {status}")
+        elif task_id:
+            parts.append(task_id)
+
+    elif tool_name == "list_tasks":
+        parts.append("查看任务列表")
+
+    elif tool_name == "ask_user_question":
+        answers = data.get("answers", {})
+        if answers:
+            summary_parts = []
+            for q, a in list(answers.items())[:3]:
+                summary_parts.append(f"{a}")
+            parts.append(", ".join(summary_parts))
+        else:
+            parts.append("等待用户回答")
+
     else:
         path = data.get("path", "")
         msg = data.get("message", "")
@@ -278,6 +317,10 @@ def _build_result_summary(tool_name: str, data: dict) -> str:
 
 def _handle_approval(interrupt_data, config, thread_id, project_root):
     """处理审批中断。"""
+    # 检查是否为 ask_user_question 中断
+    if isinstance(interrupt_data, dict) and interrupt_data.get("type") == "ask_user_question":
+        return _handle_question(interrupt_data, config, thread_id, project_root)
+
     from .approval import show_approval_details
     show_approval_details(interrupt_data)
 
@@ -292,9 +335,52 @@ def _handle_approval(interrupt_data, config, thread_id, project_root):
     approval_str = choice or "rejected"
     console.print(f"  [dim]{'已批准' if approved else '已拒绝'}，继续...[/dim]")
 
-    usage, new_interrupt = _process_stream(
-        Command(resume=approval_str), config, thread_id, project_root
-    )
+    usage = None
+    new_interrupt = None
+    for event in _process_stream(Command(resume=approval_str), config, thread_id, project_root):
+        if event["type"] == "interrupt":
+            new_interrupt = event["data"]
+            usage = event["usage"]
+        elif event["type"] == "done":
+            usage = event["usage"]
+
+    if new_interrupt:
+        return _handle_approval(new_interrupt, config, thread_id, project_root)
+    return usage
+
+
+def _handle_question(interrupt_data, config, thread_id, project_root):
+    """处理用户决策问题中断。"""
+    questions = interrupt_data.get("questions", [])
+    if not questions:
+        console.print("[red]错误：未收到问题数据[/red]")
+        return None
+
+    # 显示问题详情
+    show_question_form(questions)
+
+    # 渲染交互式选择表单
+    answers = select_options(questions)
+
+    if not answers:
+        console.print("[dim]已取消选择，使用默认回复...[/dim]")
+        answers = {q.get("question", ""): q.get("options", [{}])[0].get("label", "") for q in questions if q.get("options")}
+
+    # 显示用户的选择
+    console.print()
+    for q_text, a_text in answers.items():
+        console.print(f"  [green]✓[/green] {q_text}: [cyan]{a_text}[/cyan]")
+
+    # 用用户的选择恢复 graph
+    usage = None
+    new_interrupt = None
+    for event in _process_stream(Command(resume=answers), config, thread_id, project_root):
+        if event["type"] == "interrupt":
+            new_interrupt = event["data"]
+            usage = event["usage"]
+        elif event["type"] == "done":
+            usage = event["usage"]
+
     if new_interrupt:
         return _handle_approval(new_interrupt, config, thread_id, project_root)
     return usage

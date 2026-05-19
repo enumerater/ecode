@@ -39,12 +39,29 @@ class QuerySpinner:
         self._detail = ""
         self._paused = False
         self._lock = threading.Lock()
+        self._tasks = None  # 任务列表
+        self._current_task = None  # 当前进行中的任务
 
     def _make_text(self):
         elapsed = time.time() - self._query_start
         state_text = STATE_TEXT.get(self._state, self._state)
+
+        # 如果有进行中的任务，用任务信息替代默认状态文本
+        if self._current_task:
+            task_text = self._current_task.get("activeForm") or self._current_task.get("subject", "")
+            if task_text:
+                state_text = task_text
+
         if self._detail:
             return f"[cyan]{state_text}: {self._detail}[/cyan] [dim]{elapsed:.1f}s[/dim]"
+
+        # 显示任务进度摘要
+        if self._tasks:
+            total = len(self._tasks)
+            done = sum(1 for t in self._tasks if t.get("status") == "completed")
+            progress = f" [dim]({done}/{total})[/dim]"
+            return f"[cyan]{state_text}[/cyan]{progress} [dim]{elapsed:.1f}s[/dim]"
+
         return f"[cyan]{state_text}[/cyan] [dim]{elapsed:.1f}s[/dim]"
 
     def _refresh(self):
@@ -93,6 +110,18 @@ class QuerySpinner:
 
     def elapsed(self) -> float:
         return time.time() - self._query_start
+
+    def set_task_info(self, tasks):
+        """更新任务列表信息，自动找到当前进行中的任务。"""
+        with self._lock:
+            self._tasks = tasks
+            self._current_task = None
+            if tasks:
+                for t in tasks:
+                    if t.get("status") == "in_progress":
+                        self._current_task = t
+                        break
+        self._refresh()
 
     def stream_write(self, text: str):
         """流式文本输出：直接写入 stdout，避免 Rich 重绘干扰。"""

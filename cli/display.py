@@ -56,6 +56,12 @@ TOOL_LABELS = {
     "get_task_status": "查看任务状态",
     "list_background_tasks": "列出后台任务",
     "kill_background_task": "终止后台任务",
+    # 任务规划工具
+    "create_task": "创建任务",
+    "update_task": "更新任务",
+    "list_tasks": "列出任务",
+    # 用户决策工具
+    "ask_user_question": "询问用户",
 }
 
 # tool_call_id -> tool_name 映射
@@ -88,6 +94,15 @@ def format_tool_call_args(tool_name, args):
         return s
     if tool_name == "run_command":
         return args.get("command", "")
+    if tool_name == "create_task":
+        return args.get("subject", "")
+    if tool_name == "update_task":
+        parts = [args.get("task_id", "")]
+        if args.get("status"):
+            parts.append(f"→ {args['status']}")
+        return " ".join(parts)
+    if tool_name == "ask_user_question":
+        return "决策询问"
     return ""
 
 
@@ -203,6 +218,68 @@ def show_banner():
     console.clear()
     console.print(Panel("[black] ecode-cli 代码智能体 [/black]", style="cyan", expand=False))
     console.print()
+
+
+def show_task_list(tasks):
+    """渲染任务列表。
+
+    显示格式:
+      ✓ 已完成的任务
+      ▶ 进行中的任务
+      ○ 待执行的任务
+    """
+    if not tasks:
+        return
+
+    STATUS_ICONS = {
+        "pending": ("○", "dim"),
+        "in_progress": ("▶", "cyan"),
+        "completed": ("✓", "green"),
+    }
+
+    completed = sum(1 for t in tasks if t["status"] == "completed")
+    in_progress = sum(1 for t in tasks if t["status"] == "in_progress")
+    total = len(tasks)
+
+    lines = []
+    lines.append(f"[bold]任务进度[/bold] [dim]({completed}/{total} 完成" +
+                 (f", {in_progress} 进行中" if in_progress else "") + ")[/dim]")
+
+    for t in tasks:
+        icon, color = STATUS_ICONS.get(t["status"], ("○", "dim"))
+        subject = t["subject"]
+        if t["status"] == "completed":
+            subject = f"[dim]{subject}[/dim]"
+        elif t["status"] == "in_progress":
+            subject = f"[bold]{subject}[/bold]"
+        lines.append(f"  [{color}]{icon}[/{color}] {subject}")
+
+    console.print(Panel("\n".join(lines), title="任务规划", expand=False, style="blue"))
+
+
+def show_question_form(questions):
+    """渲染用户决策问题详情。"""
+    if not questions:
+        return
+
+    for q in questions:
+        header = q.get("header", "")
+        question_text = q.get("question", "")
+        options = q.get("options", [])
+        multi = q.get("multi_select", False)
+
+        label = f"[{header}] " if header else ""
+        console.print(f"\n  [bold]{label}{question_text}[/bold]")
+        if multi:
+            console.print("  [dim](可多选)[/dim]")
+
+        for i, opt in enumerate(options):
+            opt_label = opt.get("label", "")
+            opt_desc = opt.get("description", "")
+            desc_str = f" [dim]- {opt_desc}[/dim]" if opt_desc else ""
+            console.print(f"    [cyan]{i + 1}.[/cyan] {opt_label}{desc_str}")
+
+        console.print("  [dim]也可以输入自己的方案[/dim]")
 
 
 def show_session_info(thread_id, project_root, storage_backend="memory"):

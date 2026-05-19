@@ -184,6 +184,43 @@ async def _execute_serial_batch(
             ))
             continue
 
+        # ask_user_question: 先执行工具获取问题数据，再 interrupt 让用户回答
+        if tc.name == "ask_user_question" and interrupt_fn:
+            # 先执行工具获取问题数据
+            try:
+                tool_result = await _run_tool_async(tool_map[tc.name], tc.args)
+            except Exception as e:
+                results.append(ToolMessage(
+                    content=json.dumps({"success": False, "error": f"工具执行异常: {e}"}, ensure_ascii=False),
+                    tool_call_id=tc.id,
+                ))
+                continue
+
+            try:
+                signal_data = json.loads(tool_result)
+            except (json.JSONDecodeError, TypeError):
+                results.append(ToolMessage(content=tool_result, tool_call_id=tc.id))
+                continue
+
+            if signal_data.get("signal") == "ASK_USER_QUESTION":
+                # interrupt 暂停 graph，将问题数据传给 CLI
+                # 如果是 resume（graph 从 checkpoint 恢复），interrupt_fn 会直接返回用户的选择
+                user_answers = interrupt_fn({
+                    "type": "ask_user_question",
+                    "questions": signal_data.get("questions", []),
+                })
+                # 用户的回答作为工具结果返回给 LLM
+                results.append(ToolMessage(
+                    content=json.dumps({
+                        "success": True,
+                        "answers": user_answers,
+                    }, ensure_ascii=False),
+                    tool_call_id=tc.id,
+                ))
+            else:
+                results.append(ToolMessage(content=tool_result, tool_call_id=tc.id))
+            continue
+
         # 权限检查
         permission = "ask"
         if permission_checker:

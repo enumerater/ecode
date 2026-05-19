@@ -386,3 +386,144 @@ def text_input(message="输入内容（输入 END 结束）："):
             break
         lines.append(line)
     return "\n".join(lines) if lines else None
+
+
+# ── 用户决策表单 ──────────────────────────────────────────────────────────
+
+def select_options(questions):
+    """交互式决策表单。支持多问题、多选项、自定义输入。
+
+    questions: [{"question": str, "header": str, "options": [{"label": str, "description": str}], "multi_select": bool}]
+    Returns: {question_text: answer_text, ...}
+    """
+    if not questions:
+        return {}
+
+    import msvcrt
+
+    answers = {}
+
+    for q_idx, q in enumerate(questions):
+        question_text = q.get("question", "")
+        header = q.get("header", "")
+        options = q.get("options", [])
+        multi = q.get("multi_select", False)
+
+        # 构建选项列表（包含 "其他" 选项）
+        all_options = list(options)
+        all_options.append({"label": "其他（自定义输入）", "description": "输入自己的方案"})
+
+        idx = 0
+        rendered_lines = 0
+        custom_input = ""
+
+        label_prefix = f"[{header}] " if header else ""
+
+        def _render():
+            nonlocal rendered_lines, custom_input
+            for _ in range(rendered_lines):
+                sys.stdout.write("\033[A\033[K")
+
+            lines = []
+            lines.append(clr(f"  {label_prefix}{question_text}", "bold"))
+            if multi:
+                lines.append(clr("  (可多选，空格切换，Enter 确认)", "dim"))
+
+            for i, opt in enumerate(all_options):
+                opt_label = opt.get("label", "")
+                opt_desc = opt.get("description", "")
+                desc_str = clr(f" - {opt_desc}", "dim") if opt_desc else ""
+
+                if i == idx:
+                    if i == len(all_options) - 1:  # "其他" 选项
+                        if custom_input:
+                            lines.append(f"  {clr('▶', 'cyan')} {clr(opt_label, 'bold')}: {custom_input}█")
+                        else:
+                            lines.append(f"  {clr('▶', 'cyan')} {clr(opt_label, 'bold')}{desc_str}")
+                    else:
+                        lines.append(f"  {clr('▶', 'cyan')} {clr(opt_label, 'bold')}{desc_str}")
+                else:
+                    if i == len(all_options) - 1:  # "其他" 选项
+                        if custom_input:
+                            lines.append(f"    {clr(opt_label, 'dim')}: {custom_input}")
+                        else:
+                            lines.append(f"    {clr(opt_label, 'dim')}{desc_str}")
+                    else:
+                        lines.append(f"    {clr(opt_label, 'dim')}{desc_str}")
+
+            lines.append(clr("  ← → 切换选项  Enter 确认", "dim"))
+            sys.stdout.write("\n".join(lines) + "\n")
+            sys.stdout.flush()
+            rendered_lines = len(lines)
+
+        _render()
+
+        while True:
+            key = msvcrt.getch()
+            if key == b'\xe0':  # 方向键前缀
+                key2 = msvcrt.getch()
+                if key2 == b'K':  # 左箭头
+                    idx = (idx - 1) % len(all_options)
+                    custom_input = ""
+                    _render()
+                elif key2 == b'M':  # 右箭头
+                    idx = (idx + 1) % len(all_options)
+                    custom_input = ""
+                    _render()
+                elif key2 == b'H':  # 上箭头
+                    idx = (idx - 1) % len(all_options)
+                    custom_input = ""
+                    _render()
+                elif key2 == b'P':  # 下箭头
+                    idx = (idx + 1) % len(all_options)
+                    custom_input = ""
+                    _render()
+            elif key == b'\r':  # Enter 确认
+                # 清除渲染
+                for _ in range(rendered_lines):
+                    sys.stdout.write("\033[A\033[K")
+                sys.stdout.flush()
+
+                is_other = (idx == len(all_options) - 1)
+                if is_other:
+                    if custom_input:
+                        answers[question_text] = custom_input
+                    else:
+                        # "其他" 但没输入，切换到输入模式
+                        sys.stdout.write(clr("  请输入自定义方案: ", "yellow"))
+                        sys.stdout.flush()
+                        try:
+                            custom_input = input()
+                        except (EOFError, KeyboardInterrupt):
+                            custom_input = ""
+                        if custom_input.strip():
+                            answers[question_text] = custom_input.strip()
+                        else:
+                            # 空输入，重新渲染选择界面
+                            _render()
+                            continue
+                else:
+                    answers[question_text] = options[idx]["label"]
+                break
+            elif key == b'\x1b':  # Esc
+                for _ in range(rendered_lines):
+                    sys.stdout.write("\033[A\033[K")
+                sys.stdout.flush()
+                # Esc 取消整个表单
+                return {}
+            elif key == b'\x08' or key == b'\x7f':  # Backspace
+                if custom_input:
+                    custom_input = custom_input[:-1]
+                    _render()
+            elif key == b'\x03':  # Ctrl+C
+                for _ in range(rendered_lines):
+                    sys.stdout.write("\033[A\033[K")
+                sys.stdout.flush()
+                return {}
+            elif key >= b' ' and key <= b'~':
+                # 如果在 "其他" 选项上，开始输入模式
+                if idx == len(all_options) - 1:
+                    custom_input += key.decode('ascii', errors='ignore')
+                    _render()
+
+    return answers
