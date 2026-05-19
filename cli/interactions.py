@@ -347,6 +347,30 @@ def confirm(message="确认？", default=True):
     return ans in ("y", "yes", "是", "true", "1")
 
 
+# ── 补充信息输入 ──────────────────────────────────────────────────────────
+
+def supplement_input():
+    """智能体运行中按 Ctrl+C 后的补充信息输入。返回用户输入文本，空则返回 None。"""
+    global _chip_store
+    _chip_store = {}
+
+    session = _create_prompt_session()
+    cwd_short = os.path.basename(os.getcwd())
+    session.message = [
+        ("class:dim", f"\n[{cwd_short}] "),
+        ("class:prompt", "补充信息: "),
+    ]
+
+    try:
+        result = session.prompt()
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+    expanded = _expand_chips(result)
+    _chip_store.clear()
+    return expanded.strip() or None
+
+
 # ── 多行文本输入 ──────────────────────────────────────────────────────────
 
 def text_input(message="输入内容（输入 END 结束）："):

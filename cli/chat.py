@@ -14,7 +14,7 @@ from langgraph.types import Command
 from agent import build_graph
 from session import get_session_manager, switch_storage, get_storage_backend, SUPPORTED_BACKENDS
 from permissions.modes import PermissionMode, MODE_DESCRIPTIONS
-from .interactions import prompt_input, select_one, confirm, set_slash_commands
+from .interactions import prompt_input, select_one, confirm, set_slash_commands, supplement_input
 from .display import (
     show_banner, show_session_info, show_help,
     format_text, format_usage, format_error, format_time,
@@ -41,7 +41,7 @@ def reset_graph():
 
 
 def _process_stream(input_data, config, thread_id, project_root):
-    """处理 graph.stream() 的输出。"""
+    """处理 graph.stream() 的输出。生成器，yield 每个 chunk；遇到中断 yield 中断数据。"""
     graph = get_graph()
     accumulated_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
@@ -71,7 +71,8 @@ def _process_stream(input_data, config, thread_id, project_root):
                 if "__interrupt__" in data:
                     spinner.stop()
                     for intr in data["__interrupt__"]:
-                        return accumulated_usage, intr.value
+                        yield {"type": "interrupt", "data": intr.value, "usage": accumulated_usage}
+                    return
 
                 for node_name, node_data in data.items():
                     if not isinstance(node_data, dict):
@@ -170,13 +171,14 @@ def _process_stream(input_data, config, thread_id, project_root):
                             spinner.stream_write(content)
                 except Exception as e:
                     pass
+
+        # 流正常结束
+        overall_elapsed = spinner.elapsed()
+        format_usage(accumulated_usage, overall_elapsed)
+        yield {"type": "done", "usage": accumulated_usage}
     finally:
         spinner.stream_end()
         spinner.stop()
-
-    overall_elapsed = spinner.elapsed()
-    format_usage(accumulated_usage, overall_elapsed)
-    return accumulated_usage, None
 
 
 def _build_result_summary(tool_name: str, data: dict) -> str:
@@ -602,12 +604,43 @@ def start_chat():
             "plan_mode": plan_mode,
         }
 
-        try:
-            usage, interrupt_data = _process_stream(input_data, config, thread_id, project_root)
+        # 主对话循环：支持 Ctrl+C 补充信息后继续
+        while True:
+            interrupt_data = None
+            usage = None
+            gen = _process_stream(input_data, config, thread_id, project_root)
+            try:
+                for event in gen:
+                    if event["type"] == "interrupt":
+                        interrupt_data = event["data"]
+                        usage = event["usage"]
+                    elif event["type"] == "done":
+                        usage = event["usage"]
+            except KeyboardInterrupt:
+                gen.close()
+                console.print()
+                supplement = supplement_input()
+                if supplement:
+                    console.print(f"[dim]已收到补充信息，继续运行...[/dim]")
+                    input_data = {
+                        "messages": [HumanMessage(content=supplement)],
+                        "project_root": project_root,
+                        "permission_mode": permission_mode,
+                        "plan_mode": plan_mode,
+                    }
+                    continue  # 用补充信息重新启动流
+                else:
+                    console.print("[dim]已取消补充，中断当前任务。[/dim]")
+                    break
+            except Exception as err:
+                gen.close()
+                console.print(f"\n[red]错误：[/red]{err}")
+                break
+
+            # 正常结束或遇到 graph interrupt（审批）
             if interrupt_data:
                 _handle_approval(interrupt_data, config, thread_id, project_root)
-        except Exception as err:
-            console.print(f"\n[red]错误：[/red]{err}")
+            break
         console.print()
 
 
