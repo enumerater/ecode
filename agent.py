@@ -147,6 +147,7 @@ class State(TypedDict):
     permission_mode: str  # 权限模式：default, plan, auto_approve, yolo
     plan_mode: bool  # 是否处于计划模式
     tasks: list  # 任务规划列表 [{"id", "subject", "activeForm", "status"}]
+    always_allow_tools: list  # 用户选择"以后都同意"的工具名列表
 
 
 def _is_prompt_too_long_error(error: Exception) -> bool:
@@ -296,9 +297,14 @@ def execute_tools(state: State) -> dict:
     mode_rules = get_mode_defaults(mode)
     all_rules = settings.get_all_rules() + mode_rules
 
+    # 用户"以后都同意"的工具列表
+    always_allow = set(state.get("always_allow_tools") or [])
+
     # 创建权限检查函数
     def check_permission(tool_name: str, tool_args: dict) -> str:
         """返回 'allow', 'deny', 或 'ask'"""
+        if tool_name in always_allow:
+            return "allow"
         result = evaluate_permission(tool_name, tool_args, all_rules)
         return result.behavior.value
 
