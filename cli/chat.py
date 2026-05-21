@@ -315,14 +315,11 @@ def _build_result_summary(tool_name: str, data: dict) -> str:
     return " ".join(parts)
 
 
-def _handle_approval(interrupt_data, config, thread_id, project_root, always_allow_tools=None):
+def _handle_approval(interrupt_data, config, thread_id, project_root, session_approved=False):
     """处理审批中断。"""
-    if always_allow_tools is None:
-        always_allow_tools = []
-
     # 检查是否为 ask_user_question 中断
     if isinstance(interrupt_data, dict) and interrupt_data.get("type") == "ask_user_question":
-        return _handle_question(interrupt_data, config, thread_id, project_root, always_allow_tools)
+        return _handle_question(interrupt_data, config, thread_id, project_root, session_approved)
 
     from .approval import show_approval_details
     show_approval_details(interrupt_data)
@@ -334,17 +331,14 @@ def _handle_approval(interrupt_data, config, thread_id, project_root, always_all
         {"value": "approved", "label": "允许执行"},
         {"value": "rejected", "label": "拒绝"},
     ]
-    if tool_name:
-        options.append({"value": "always_allow", "label": f"以后都同意 [{tool_label_name}]"})
+    options.append({"value": "session_approve", "label": "全部同意（本会话）"})
 
     choice = select_one(options, message="是否允许此操作？")
 
-    if choice == "always_allow":
-        # 添加到"以后都同意"列表
-        if tool_name and tool_name not in always_allow_tools:
-            always_allow_tools.append(tool_name)
+    if choice == "session_approve":
+        session_approved = True
         choice = "approved"
-        console.print(f"  [dim]已批准，以后同类操作 [{tool_label_name}] 将自动执行[/dim]")
+        console.print("  [dim]已批准，本会话内所有操作将自动执行[/dim]")
     else:
         approved = choice == "approved"
         approval_str = choice or "rejected"
@@ -352,9 +346,13 @@ def _handle_approval(interrupt_data, config, thread_id, project_root, always_all
 
     approval_str = choice or "rejected"
 
+    resume_cmd = Command(resume=approval_str)
+    if session_approved:
+        resume_cmd = Command(resume=approval_str, update={"session_approved": True})
+
     usage = None
     new_interrupt = None
-    for event in _process_stream(Command(resume=approval_str), config, thread_id, project_root):
+    for event in _process_stream(resume_cmd, config, thread_id, project_root):
         if event["type"] == "interrupt":
             new_interrupt = event["data"]
             usage = event["usage"]
@@ -362,19 +360,17 @@ def _handle_approval(interrupt_data, config, thread_id, project_root, always_all
             usage = event["usage"]
 
     if new_interrupt:
-        return _handle_approval(new_interrupt, config, thread_id, project_root, always_allow_tools)
-    return usage, always_allow_tools
+        return _handle_approval(new_interrupt, config, thread_id, project_root, session_approved)
+    return usage, session_approved
 
 
-def _handle_question(interrupt_data, config, thread_id, project_root, always_allow_tools=None):
+def _handle_question(interrupt_data, config, thread_id, project_root, session_approved=False):
     """处理用户决策问题中断。"""
-    if always_allow_tools is None:
-        always_allow_tools = []
 
     questions = interrupt_data.get("questions", [])
     if not questions:
         console.print("[red]错误：未收到问题数据[/red]")
-        return None, always_allow_tools
+        return None, session_approved
 
     # 显示问题详情
     show_question_form(questions)
@@ -402,8 +398,8 @@ def _handle_question(interrupt_data, config, thread_id, project_root, always_all
             usage = event["usage"]
 
     if new_interrupt:
-        return _handle_approval(new_interrupt, config, thread_id, project_root, always_allow_tools)
-    return usage, always_allow_tools
+        return _handle_approval(new_interrupt, config, thread_id, project_root, session_approved)
+    return usage, session_approved
 
 
 # --- Slash command handlers ---
@@ -616,7 +612,7 @@ def start_chat():
     project_root = __import__("os").getcwd().replace("\\", "/")
     permission_mode = "default"
     plan_mode = False
-    always_allow_tools = []  # 用户选择"以后都同意"的工具名列表
+    session_approved = False  # 用户选择"全部同意"后，会话内所有工具自动批准
 
     show_session_info(thread_id, project_root, get_storage_backend())
 
@@ -709,7 +705,7 @@ def start_chat():
             "project_root": project_root,
             "permission_mode": permission_mode,
             "plan_mode": plan_mode,
-            "always_allow_tools": always_allow_tools,
+            "session_approved": session_approved,
         }
 
         # 主对话循环：支持 Ctrl+C 补充信息后继续
@@ -735,7 +731,7 @@ def start_chat():
                         "project_root": project_root,
                         "permission_mode": permission_mode,
                         "plan_mode": plan_mode,
-                        "always_allow_tools": always_allow_tools,
+                        "session_approved": session_approved,
                     }
                     continue  # 用补充信息重新启动流
                 else:
@@ -748,7 +744,7 @@ def start_chat():
 
             # 正常结束或遇到 graph interrupt（审批）
             if interrupt_data:
-                _, always_allow_tools = _handle_approval(interrupt_data, config, thread_id, project_root, always_allow_tools)
+                _, session_approved = _handle_approval(interrupt_data, config, thread_id, project_root, session_approved)
             break
         console.print()
 
