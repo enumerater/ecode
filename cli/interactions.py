@@ -25,6 +25,7 @@ _HISTORY_MAX = 1000
 
 _prompt_session = None
 _slash_commands: list[str] = []
+_mode_toggle_callback = None  # Shift+Tab 模式切换回调
 
 # ── 粘贴芯片（Paste Chip）──────────────────────────────────────────────────
 # 粘贴多行文本时，显示为 [Pasted text #N +X lines] 的可折叠芯片
@@ -128,6 +129,13 @@ def _create_prompt_session():
         else:
             buf.insert_text("    ")
 
+    # ── Shift+Tab: 切换计划模式 ──
+    @kb.add("s-tab")
+    def _(event):
+        """Shift+Tab: 切换计划/默认模式。"""
+        if _mode_toggle_callback:
+            _mode_toggle_callback()
+
     # ── PromptSession ──
     cwd_short = os.path.basename(os.getcwd())
     prompt_msg = [
@@ -182,13 +190,12 @@ def prompt_input(message=">"):
 
     session = _create_prompt_session()
 
-    # 更新提示符（如果 message 不同）
+    # 始终更新提示符（supplement_input 等会修改 session.message）
     cwd_short = os.path.basename(os.getcwd())
-    if message != ">":
-        session.message = [
-            ("class:dim", f"\n[{cwd_short}] "),
-            ("class:prompt", f"{message} "),
-        ]
+    session.message = [
+        ("class:dim", f"\n[{cwd_short}] "),
+        ("class:prompt", f"{message} "),
+    ]
 
     try:
         result = session.prompt()
@@ -211,6 +218,12 @@ def set_slash_commands(cmds: list[str]):
         from prompt_toolkit.completion import WordCompleter
         completer = WordCompleter(_slash_commands, ignore_case=True)
         _prompt_session.completer = completer
+
+
+def set_mode_toggle_callback(callback):
+    """设置 Shift+Tab 模式切换回调。"""
+    global _mode_toggle_callback
+    _mode_toggle_callback = callback
 
 
 # ── 单选菜单 ──────────────────────────────────────────────────────────────

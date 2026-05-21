@@ -14,7 +14,7 @@ from langgraph.types import Command
 from agent import build_graph
 from session import get_session_manager, switch_storage, get_storage_backend, SUPPORTED_BACKENDS
 from permissions.modes import PermissionMode, MODE_DESCRIPTIONS
-from .interactions import prompt_input, select_one, confirm, set_slash_commands, supplement_input, select_options
+from .interactions import prompt_input, select_one, confirm, set_slash_commands, supplement_input, select_options, set_mode_toggle_callback
 from .display import (
     show_banner, show_session_info, show_help,
     format_text, format_usage, format_error, format_time,
@@ -613,6 +613,21 @@ def start_chat():
     permission_mode = "default"
     plan_mode = False
     session_approved = False  # 用户选择"全部同意"后，会话内所有工具自动批准
+
+    # 注册 Shift+Tab 模式切换回调
+    def _toggle_plan_mode():
+        nonlocal plan_mode, permission_mode
+        plan_mode = not plan_mode
+        if plan_mode:
+            permission_mode = "plan"
+            console.print("\n[green]已进入计划模式 (Shift+Tab)[/green]")
+        else:
+            permission_mode = "default"
+            console.print("\n[green]已退出计划模式 (Shift+Tab)[/green]")
+        from agent import reset_tool_llm
+        reset_tool_llm()
+
+    set_mode_toggle_callback(_toggle_plan_mode)
 
     show_session_info(thread_id, project_root, get_storage_backend())
 

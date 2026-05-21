@@ -77,6 +77,21 @@ IMMUTABLE_INSTRUCTIONS = """\
 3. 完成后用 `update_task` 将状态设为 completed
 4. 用户可以在前端实时看到任务进度
 
+### 复杂任务自动规划
+当用户的请求涉及以下情况时，先调用 `enter_plan_mode` 进入计划模式进行分析规划：
+- 修改 3 个以上文件
+- 涉及架构变更（新增模块、重构结构）
+- 需求不明确，需要先分析现有代码
+- 用户说"分析一下"、"规划一下"、"帮我看看怎么改"等意图
+
+进入计划模式后：
+1. 分析现有代码结构
+2. 制定详细实施步骤
+3. 调用 `exit_plan_mode` 并传入完整计划内容（plan_content 参数）
+4. 等待用户批准后开始执行
+
+对于简单任务（单文件修改、小 bug 修复），无需进入计划模式，直接执行。
+
 ### 决策询问
 当遇到以下情况时，用 `ask_user_question` 询问用户：
 - 技术选型（框架、数据库、ORM 等）
@@ -94,7 +109,7 @@ IMMUTABLE_INSTRUCTIONS = """\
 """
 
 
-def _build_immutable_context(project_root: str) -> str:
+def _build_immutable_context(project_root: str, plan_mode: bool = False) -> str:
     """构建不可变 system prompt 前缀。每个 session 只调用一次。
 
     内容跨轮完全一致，LLM provider 可缓存 KV。
@@ -115,8 +130,13 @@ def _build_immutable_context(project_root: str) -> str:
     if memories:
         sections.append(f"## 跨会话记忆\n\n{memories}")
 
-    # 工具索引表
-    tool_index = build_tool_index(ALL_TOOLS, SAFE_TOOLS, DANGEROUS_TOOLS, TOOL_META)
+    # 工具索引表（按模式加载不同工具集）
+    if plan_mode:
+        from tools import PLAN_MODE_TOOLS
+        tools_for_index = PLAN_MODE_TOOLS
+    else:
+        tools_for_index = ALL_TOOLS
+    tool_index = build_tool_index(tools_for_index, SAFE_TOOLS, DANGEROUS_TOOLS, TOOL_META)
     sections.append(f"## 可用工具一览\n\n{tool_index}\n\n使用 `get_tool_details` 工具获取某个工具的完整文档。")
 
     # 工作规则
@@ -124,15 +144,26 @@ def _build_immutable_context(project_root: str) -> str:
 
     return "\n\n---\n\n".join(sections)
 
-_tool_llm = None
+_tool_llm_cache: dict[str, object] = {}
 
 
-def _get_tool_llm():
-    global _tool_llm
-    if _tool_llm is None:
-        from model import llm
-        _tool_llm = llm.bind_tools(ALL_TOOLS)
-    return _tool_llm
+def _get_tool_llm(plan_mode: bool = False):
+    """获取绑定了工具的 LLM 实例，按模式缓存。"""
+    from model import llm
+    mode_key = "plan" if plan_mode else "default"
+    if mode_key not in _tool_llm_cache:
+        if plan_mode:
+            from tools import PLAN_MODE_TOOLS
+            _tool_llm_cache[mode_key] = llm.bind_tools(PLAN_MODE_TOOLS)
+        else:
+            _tool_llm_cache[mode_key] = llm.bind_tools(ALL_TOOLS)
+    return _tool_llm_cache[mode_key]
+
+
+def reset_tool_llm():
+    """清除工具 LLM 缓存（模式切换时调用）。"""
+    global _tool_llm_cache
+    _tool_llm_cache.clear()
 
 
 class State(TypedDict):
@@ -144,6 +175,7 @@ class State(TypedDict):
     compact_summary: str  # 最近一次压缩的摘要文本
     compact_at: int  # 压缩时的消息数量，用于判断哪些是新消息
     immutable_context: str  # 不可变上下文（ecode.md + 工具索引 + 工作规则），构建一次跨轮复用
+    immutable_context_key: str  # 跟踪 immutable_context 对应的模式（plan/default）
     permission_mode: str  # 权限模式：default, plan, auto_approve, yolo
     plan_mode: bool  # 是否处于计划模式
     tasks: list  # 任务规划列表 [{"id", "subject", "activeForm", "status"}]
@@ -184,11 +216,14 @@ def think(state: State) -> dict:
     messages = list(state["messages"])
     original_msg_count = len(messages)
 
-    # ── 不可变上下文：构建一次，跨轮复用 ──
+    # ── 不可变上下文：按模式构建，跨轮复用 ──
+    plan_mode = state.get("plan_mode", False)
     immutable_ctx = state.get("immutable_context")
-    if not immutable_ctx:
+    immutable_ctx_key = state.get("immutable_context_key", "")
+    current_key = "plan" if plan_mode else "default"
+    if not immutable_ctx or immutable_ctx_key != current_key:
         project_root = state.get("project_root", ".")
-        immutable_ctx = _build_immutable_context(project_root)
+        immutable_ctx = _build_immutable_context(project_root, plan_mode=plan_mode)
 
     # Layer 3: 如果有 compact_summary，只保留压缩后的摘要 + 新消息
     compact_summary = state.get("compact_summary")
@@ -208,12 +243,12 @@ def think(state: State) -> dict:
         result["compact_summary"] = summary
         result["compact_at"] = original_msg_count
 
-    # 首次构建时存入 state，后续轮次直接复用
-    if not state.get("immutable_context"):
+    # 首次构建或模式切换时存入 state
+    if not state.get("immutable_context") or immutable_ctx_key != current_key:
         result["immutable_context"] = immutable_ctx
+        result["immutable_context_key"] = current_key
 
     # ── 组装：不可变 SystemMessage（缓存前缀）+ 可变消息 ──
-    plan_mode = state.get("plan_mode", False)
     if plan_mode:
         plan_instruction = SystemMessage(content="""## ⚠️ 计划模式已激活
 
@@ -222,6 +257,13 @@ def think(state: State) -> dict:
 - **只允许**分析代码、搜索、查看文件等只读操作
 - 你的任务是：分析问题、制定计划、输出详细的实施方案
 - 计划完成后，调用 `exit_plan_mode` 工具请求用户批准执行
+- **重要**：调用 exit_plan_mode 时，通过 plan_content 参数传入完整的 Markdown 计划内容，系统会自动保存为 .ecode/plan.md
+
+计划内容应包含：
+1. **概述** - 要解决的问题和目标
+2. **步骤** - 详细的实施步骤（编号列表）
+3. **涉及文件** - 每个步骤涉及的文件路径
+4. **注意事项** - 潜在风险和注意事项
 
 请专注于分析和规划，不要尝试执行修改。""")
         full_messages = [SystemMessage(content=immutable_ctx), plan_instruction] + messages
@@ -239,7 +281,7 @@ def think(state: State) -> dict:
         full_messages.insert(1, task_context)
 
     try:
-        response = _get_tool_llm().invoke(full_messages)
+        response = _get_tool_llm(plan_mode=plan_mode).invoke(full_messages)
     except Exception as e:
         # ── 错误恢复：prompt-too-long → Reactive Compact 重试 ──
         if _is_prompt_too_long_error(e):
@@ -251,7 +293,7 @@ def think(state: State) -> dict:
                 # 重试 LLM 调用
                 full_messages = [SystemMessage(content=immutable_ctx)] + compacted_messages
                 try:
-                    response = _get_tool_llm().invoke(full_messages)
+                    response = _get_tool_llm(plan_mode=plan_mode).invoke(full_messages)
                 except Exception as retry_e:
                     logger.error(f"Reactive Compact 重试失败: {retry_e}")
                     result["messages"] = [AIMessage(content=f"抱歉，上下文过长且压缩后仍无法处理: {retry_e}")]
@@ -484,10 +526,14 @@ def execute_tools(state: State) -> dict:
     if plan_mode_enter and not current_plan_mode:
         final_update["plan_mode"] = True
         final_update["permission_mode"] = "plan"
+        final_update["immutable_context"] = ""  # 强制重建
+        reset_tool_llm()
         logger.info("进入计划模式")
     elif plan_mode_exit and current_plan_mode:
         final_update["plan_mode"] = False
         final_update["permission_mode"] = "default"
+        final_update["immutable_context"] = ""  # 强制重建
+        reset_tool_llm()
         logger.info("退出计划模式")
     if compact_triggered:
         logger.info("Manual Compact 触发")

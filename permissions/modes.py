@@ -16,7 +16,7 @@ class PermissionMode(str, Enum):
 
 MODE_DESCRIPTIONS = {
     PermissionMode.DEFAULT: "默认模式：安全工具自动执行，危险工具需审批",
-    PermissionMode.PLAN: "计划模式：只读，禁止所有写操作（用于分析和规划）",
+    PermissionMode.PLAN: "计划模式：只读优先，写操作需审批（用于分析和规划）",
     PermissionMode.AUTO_APPROVE: "自动批准：安全工具+常见编辑自动执行，仅破坏性操作需审批",
     PermissionMode.YOLO: "YOLO 模式：全部自动批准（谨慎使用）",
 }
@@ -84,14 +84,14 @@ def _plan_mode_rules() -> list[PermissionRule]:
         PermissionRule(tool="git_blame", behavior=Behavior.ALLOW, source=Source.MODE),
         # 记忆工具：允许（只读）
         PermissionRule(tool="list_memories", behavior=Behavior.ALLOW, source=Source.MODE),
-        # 写工具：拒绝
-        PermissionRule(tool="edit_file", behavior=Behavior.DENY, source=Source.MODE),
-        PermissionRule(tool="write_file", behavior=Behavior.DENY, source=Source.MODE),
-        PermissionRule(tool="create_file", behavior=Behavior.DENY, source=Source.MODE),
-        PermissionRule(tool="create_directory", behavior=Behavior.DENY, source=Source.MODE),
-        PermissionRule(tool="run_command", behavior=Behavior.DENY, source=Source.MODE),
-        PermissionRule(tool="git_commit", behavior=Behavior.DENY, source=Source.MODE),
-        PermissionRule(tool="save_memory", behavior=Behavior.DENY, source=Source.MODE),
+        # 写工具：需审批（系统提示已禁止，此处为安全兜底）
+        PermissionRule(tool="edit_file", behavior=Behavior.ASK, source=Source.MODE),
+        PermissionRule(tool="write_file", behavior=Behavior.ASK, source=Source.MODE),
+        PermissionRule(tool="create_file", behavior=Behavior.ASK, source=Source.MODE),
+        PermissionRule(tool="create_directory", behavior=Behavior.ASK, source=Source.MODE),
+        PermissionRule(tool="run_command", behavior=Behavior.ASK, source=Source.MODE),
+        PermissionRule(tool="git_commit", behavior=Behavior.ASK, source=Source.MODE),
+        PermissionRule(tool="save_memory", behavior=Behavior.ASK, source=Source.MODE),
         # compact 允许（只读操作）
         PermissionRule(tool="compact", behavior=Behavior.ALLOW, source=Source.MODE),
     ]
