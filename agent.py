@@ -281,7 +281,12 @@ def think(state: State) -> dict:
         full_messages.insert(1, task_context)
 
     try:
+        print("Thinking...========================================================")
+        print(full_messages)
+        print("Thinking...========================================================")
+
         response = _get_tool_llm(plan_mode=plan_mode).invoke(full_messages)
+
     except Exception as e:
         # ── 错误恢复：prompt-too-long → Reactive Compact 重试 ──
         if _is_prompt_too_long_error(e):
@@ -536,6 +541,7 @@ def execute_tools(state: State) -> dict:
         reset_tool_llm()
         logger.info("退出计划模式")
     if compact_triggered:
+        from model import llm
         logger.info("Manual Compact 触发")
         all_messages = state["messages"] + results
         _, summary = manual_compact(all_messages, llm, compact_instruction)
@@ -625,4 +631,4 @@ def build_graph():
         END: END,
     })
 
-    return g.compile(checkpointer=get_checkpointer())
+    return g.compile(checkpointer=get_checkpointer(), debug=True)
