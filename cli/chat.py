@@ -14,6 +14,7 @@ from langgraph.types import Command
 from agent import build_graph
 from session import get_session_manager, switch_storage, get_storage_backend, SUPPORTED_BACKENDS
 from permissions.modes import PermissionMode, MODE_DESCRIPTIONS
+from context_manager import estimate_tokens, MAX_TOKENS, manual_compact
 from .interactions import prompt_input, select_one, confirm, set_slash_commands, supplement_input, select_options, set_mode_toggle_callback
 from .display import (
     show_banner, show_session_info, show_help,
@@ -38,6 +39,36 @@ def get_graph():
 def reset_graph():
     global _graph
     _graph = None
+
+
+def _get_context_usage(graph, config):
+    """获取当前上下文 token 使用量（含 immutable_context）。
+
+    返回 (token_count, percentage)，其中 token_count 是实际发给 LLM 的总 token 估算。
+    """
+    try:
+        from langchain_core.messages import SystemMessage
+        state = graph.get_state(config)
+        if not state or not state.values:
+            return 0, 0.0
+        values = state.values
+        messages = values.get("messages", [])
+        if not messages:
+            return 0, 0.0
+        # 基础消息 token
+        token_count = estimate_tokens(messages)
+        # immutable_context 是实际发给 LLM 的 system prompt 大头
+        immutable_ctx = values.get("immutable_context", "")
+        if immutable_ctx:
+            token_count += estimate_tokens([SystemMessage(content=immutable_ctx)])
+        # compact_summary 也占空间
+        compact_summary = values.get("compact_summary", "")
+        if compact_summary:
+            token_count += estimate_tokens([SystemMessage(content=compact_summary)])
+        percentage = min(token_count / MAX_TOKENS * 100, 100.0)
+        return token_count, percentage
+    except Exception:
+        return 0, 0.0
 
 
 def _process_stream(input_data, config, thread_id, project_root):
@@ -602,7 +633,7 @@ def _check_first_run():
 
 
 def start_chat():
-    set_slash_commands(["help", "init", "sessions", "switch", "new", "delete", "history", "clear", "exit", "mode", "plan", "storage"])
+    set_slash_commands(["help", "init", "sessions", "switch", "new", "delete", "history", "clear", "exit", "mode", "plan", "storage", "compact"])
 
     _check_first_run()
 
@@ -631,8 +662,27 @@ def start_chat():
 
     show_session_info(thread_id, project_root, get_storage_backend())
 
+    def _toolbar():
+        config = {"configurable": {"thread_id": thread_id}}
+        token_count, pct = _get_context_usage(get_graph(), config)
+        if token_count == 0:
+            return " 上下文: 空 "
+        if pct < 60:
+            color = "ansigreen"
+        elif pct < 80:
+            color = "ansiyellow"
+        else:
+            color = "ansired"
+        token_k = f"{token_count // 1000}k" if token_count >= 1000 else str(token_count)
+        max_k = f"{MAX_TOKENS // 1000}k"
+        return [
+            ("", " 上下文: "),
+            (color, f"{pct:.0f}%"),
+            ("", f" ({token_k}/{max_k})"),
+        ]
+
     while True:
-        user_input = prompt_input(">")
+        user_input = prompt_input(">", toolbar_fn=_toolbar)
         if user_input is None:
             console.print("\n再见！")
             break
@@ -705,6 +755,30 @@ def start_chat():
                         console.print("[dim]注意：切换后之前的会话数据在新后端中不可见[/dim]")
                     except ConnectionError as e:
                         console.print(f"[red]{e}[/red]")
+            elif cmd == "/compact":
+                config = {"configurable": {"thread_id": thread_id}}
+                state = get_graph().get_state(config)
+                if not state or not state.values or not state.values.get("messages"):
+                    console.print("[dim]当前会话没有消息，无需压缩[/dim]")
+                else:
+                    messages = state.values["messages"]
+                    token_count, pct = _get_context_usage(get_graph(), config)
+                    console.print(f"[dim]当前上下文: {token_count} tokens ({pct:.0f}%)，正在压缩...[/dim]")
+                    try:
+                        import model as _model
+                        llm = _model.create_llm()
+                        _, summary = manual_compact(messages, llm)
+                        if summary:
+                            get_graph().update_state(config, {
+                                "compact_summary": summary,
+                                "compact_at": len(messages),
+                            })
+                            console.print(f"[green]上下文已压缩。摘要:[/green]")
+                            console.print(f"  [dim]{summary}[/dim]")
+                        else:
+                            console.print("[yellow]压缩失败，未生成摘要[/yellow]")
+                    except Exception as e:
+                        console.print(f"[red]压缩失败: {e}[/red]")
             elif cmd == "/exit":
                 console.print("再见！")
                 break

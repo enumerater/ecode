@@ -17,7 +17,7 @@ from langchain_core.messages import (
 logger = logging.getLogger(__name__)
 
 # ── 配置 ──────────────────────────────────────────────────────────────
-MAX_TOKENS = 60000            # 触发 Auto-Compact 的 token 阈值
+MAX_TOKENS = 200000           # 触发 Auto-Compact 的 token 阈值
 KEEP_RECENT_MESSAGES = 20     # 压缩时保留的最近消息数
 MICRO_COMPACT_AFTER_TURNS = 3  # N 轮前的工具结果触发微压缩
 SUMMARY_MAX_CHARS = 500       # 摘要最大字符数

@@ -178,12 +178,13 @@ def _create_prompt_session():
     return _prompt_session
 
 
-def prompt_input(message=">"):
+def prompt_input(message=">", toolbar_fn=None):
     """带历史记录的输入，支持多行粘贴芯片。
 
     - 粘贴多行文本时自动显示为 [Pasted text #N +X lines] 芯片
     - 芯片作为一个整体：Backspace 一键删除
     - Enter 发送时自动展开芯片为原始文本
+    - toolbar_fn: 可选的回调函数，返回 bottom_toolbar 内容
     """
     global _chip_store
     _chip_store = {}  # 每次输入清空芯片存储
@@ -196,6 +197,9 @@ def prompt_input(message=">"):
         ("class:dim", f"\n[{cwd_short}] "),
         ("class:prompt", f"{message} "),
     ]
+
+    # 设置 bottom_toolbar
+    session.bottom_toolbar = toolbar_fn
 
     try:
         result = session.prompt()

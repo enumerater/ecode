@@ -299,6 +299,7 @@ def show_help():
         ("/mode", "切换权限模式"),
         ("/plan", "切换计划模式"),
         ("/storage", "切换存储后端 (memory/mysql)"),
+        ("/compact", "手动压缩上下文"),
         ("/clear", "清屏"),
         ("/exit", "退出"),
     ]
