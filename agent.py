@@ -631,4 +631,4 @@ def build_graph():
         END: END,
     })
 
-    return g.compile(checkpointer=get_checkpointer(), debug=True)
+    return g.compile(checkpointer=get_checkpointer(), debug=False)

@@ -55,16 +55,18 @@ def _get_context_usage(graph, config):
         messages = values.get("messages", [])
         if not messages:
             return 0, 0.0
-        # 基础消息 token
-        token_count = estimate_tokens(messages)
+        # compact_summary 替换旧消息，与 _build_messages 逻辑一致
+        compact_summary = values.get("compact_summary", "")
+        compact_at = values.get("compact_at", 0)
+        if compact_summary and compact_at > 0 and compact_at < len(messages):
+            new_messages = messages[compact_at:]
+            token_count = estimate_tokens([SystemMessage(content=f"[对话历史摘要]\n{compact_summary}")]) + estimate_tokens(new_messages)
+        else:
+            token_count = estimate_tokens(messages)
         # immutable_context 是实际发给 LLM 的 system prompt 大头
         immutable_ctx = values.get("immutable_context", "")
         if immutable_ctx:
             token_count += estimate_tokens([SystemMessage(content=immutable_ctx)])
-        # compact_summary 也占空间
-        compact_summary = values.get("compact_summary", "")
-        if compact_summary:
-            token_count += estimate_tokens([SystemMessage(content=compact_summary)])
         percentage = min(token_count / MAX_TOKENS * 100, 100.0)
         return token_count, percentage
     except Exception:
