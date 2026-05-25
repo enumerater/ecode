@@ -281,9 +281,9 @@ def think(state: State) -> dict:
         full_messages.insert(1, task_context)
 
     try:
-        print("Thinking...========================================================")
-        print(full_messages)
-        print("Thinking...========================================================")
+        # print("Thinking...========================================================")
+        # print(full_messages)
+        # print("Thinking...========================================================")
 
         response = _get_tool_llm(plan_mode=plan_mode).invoke(full_messages)
 
