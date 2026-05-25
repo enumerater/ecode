@@ -1,0 +1,2 @@
+[console_scripts]
+ecode = cli.chat:main

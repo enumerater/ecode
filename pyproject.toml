@@ -3,12 +3,25 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ecode"
+name = "ecode-agent"
 version = "1.0.0"
 description = "🧠 基于 LangGraph 的 AI 编程助手。用自然语言操作项目文件系统——读取、搜索、编辑文件，执行命令，Git 集成，支持 SSE 流式响应和 CLI 终端交互。"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
+authors = [
+    { name = "enumerate" },
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Software Development :: Code Generators",
+]
 dependencies = [
     # Backend
     "fastapi",
@@ -27,11 +40,16 @@ dependencies = [
     "prompt_toolkit>=3.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/enumerater/ecode"
+Repository = "https://github.com/enumerater/ecode"
+Issues = "https://github.com/enumerater/ecode/issues"
+
 [project.scripts]
 ecode = "cli.chat:main"
 
 [tool.setuptools.packages.find]
-include = ["cli*", "tools*", "memory*", "hooks*", "permissions*", "tasks*", "utils*", "context*"]
+include = ["cli*", "tools*", "memory*", "hooks*", "permissions*", "tasks*", "utils*"]
 
 [tool.setuptools]
 py-modules = ["agent", "model", "session", "schemas", "settings", "context_manager", "project_context"]

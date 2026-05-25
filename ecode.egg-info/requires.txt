@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+langchain
+langchain-core
+langchain-openai
+langgraph
+langgraph-checkpoint-mysql
+pymysql
+pydantic
+python-dotenv
+rich
+pyyaml
+prompt_toolkit>=3.0

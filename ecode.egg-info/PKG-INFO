@@ -1,3 +1,38 @@
+Metadata-Version: 2.4
+Name: ecode
+Version: 1.0.0
+Summary: 🧠 基于 LangGraph 的 AI 编程助手。用自然语言操作项目文件系统——读取、搜索、编辑文件，执行命令，Git 集成，支持 SSE 流式响应和 CLI 终端交互。
+Author: enumerate
+License-Expression: MIT
+Project-URL: Homepage, https://github.com/enumerater/ecode
+Project-URL: Repository, https://github.com/enumerater/ecode
+Project-URL: Issues, https://github.com/enumerater/ecode/issues
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Software Development :: Libraries :: Application Frameworks
+Classifier: Topic :: Software Development :: Code Generators
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: langchain
+Requires-Dist: langchain-core
+Requires-Dist: langchain-openai
+Requires-Dist: langgraph
+Requires-Dist: langgraph-checkpoint-mysql
+Requires-Dist: pymysql
+Requires-Dist: pydantic
+Requires-Dist: python-dotenv
+Requires-Dist: rich
+Requires-Dist: pyyaml
+Requires-Dist: prompt_toolkit>=3.0
+Dynamic: license-file
+
 <div align="center">
 
 # ecode
@@ -76,7 +111,9 @@ ecode 是一个开源的终端 AI 编程智能体，类似于 Claude Code / Curs
 ### 安装
 
 ```bash
-pip install ecode-agent
+git clone https://github.com/your-username/ecode.git
+cd ecode
+pip install -e .
 ```
 
 ### 首次运行
@@ -325,7 +362,7 @@ llm:
 ## 开发
 
 ```bash
-# 安装依赖
+# 安装
 pip install -e .
 
 # 运行 CLI
@@ -354,7 +391,9 @@ python main.py
 
 **Quick Start:**
 ```bash
-pip install ecode-agent
+git clone https://github.com/your-username/ecode.git
+cd ecode
+pip install -e .
 cd your-project && ecode
 ```
 
