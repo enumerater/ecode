@@ -1,7 +1,14 @@
 import json
 import subprocess
 import threading
+import time
 from langchain_core.tools import tool
+
+from tools.streaming import (
+    COMMAND_POLL_INTERVAL,
+    COMMAND_MIN_LINES_BEFORE_PUSH,
+    push_command_stream,
+)
 
 # 命令超时时间（秒）
 COMMAND_TIMEOUT = 60
@@ -64,6 +71,20 @@ def _read_pipe(pipe, buf_list, lock, auto_respond, proc_stdin, label):
         pipe.close()
 
 
+# 线程局部变量：由 tool_executor 在执行前设置，用于流式传输
+_thread_local = threading.local()
+
+
+def _set_streaming_ctx(tool_call_id: str):
+    """设置当前线程的流式上下文（由 tool_executor 调用）。"""
+    _thread_local.tool_call_id = tool_call_id
+
+
+def _get_streaming_ctx() -> str:
+    """获取当前线程的流式上下文。"""
+    return getattr(_thread_local, "tool_call_id", "")
+
+
 @tool
 def run_command(command: str, timeout: int = COMMAND_TIMEOUT, auto_respond: bool = True) -> str:
     """在项目目录中执行终端命令。需要用户审批。
@@ -73,6 +94,10 @@ def run_command(command: str, timeout: int = COMMAND_TIMEOUT, auto_respond: bool
     - stdin 默认关闭，无法自动处理的交互式命令会快速失败而非卡住
     - matplotlib 等 GUI 程序自动使用非交互后端，不会弹窗阻塞
 
+    流式输出：
+    - 长时间运行的命令会实时推流 stdout/stderr
+    - 客户端可以通过 SSE tool_result_chunk 事件查看实时进度
+
     Args:
         command: 要执行的命令
         timeout: 超时时间（秒），默认 60
@@ -81,6 +106,7 @@ def run_command(command: str, timeout: int = COMMAND_TIMEOUT, auto_respond: bool
     from tools import get_project_root
 
     timeout = min(max(timeout, 1), 300)
+    tool_call_id = _get_streaming_ctx()
 
     try:
         env = {**__import__('os').environ, **_SUBPROCESS_ENV}
@@ -115,16 +141,42 @@ def run_command(command: str, timeout: int = COMMAND_TIMEOUT, auto_respond: bool
         stdout_thread.start()
         stderr_thread.start()
 
+        # 记录上次推送时的累积行数，用于增量推送
+        last_pushed_count = 0
+        poll_start = time.time()
+
         try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
+            # 轮询等待命令完成，同时实时推送流式输出
+            while proc.poll() is None:
+                # 检查总超时
+                if time.time() - poll_start > timeout:
+                    proc.kill()
+                    proc.wait()
+                    stdout_thread.join(timeout=2)
+                    stderr_thread.join(timeout=2)
+                    return json.dumps({
+                        "success": False,
+                        "error": f"命令超时({timeout}s): {command}",
+                    }, ensure_ascii=False)
+
+                try:
+                    proc.wait(timeout=COMMAND_POLL_INTERVAL)
+                except subprocess.TimeoutExpired:
+                    # 超时是正常的：进程还在运行，推送实时输出
+                    if tool_call_id:
+                        with lock:
+                            new_lines = stdout_lines[last_pushed_count:]
+                            last_pushed_count = len(stdout_lines)
+                        if new_lines:
+                            push_command_stream(tool_call_id, command, new_lines, is_final=False)
+        except OSError as e:
             proc.kill()
             proc.wait()
             stdout_thread.join(timeout=2)
             stderr_thread.join(timeout=2)
             return json.dumps({
                 "success": False,
-                "error": f"命令超时({timeout}s): {command}",
+                "error": f"命令执行异常: {e}",
             }, ensure_ascii=False)
         finally:
             if proc.stdin and not proc.stdin.closed:
@@ -146,6 +198,12 @@ def run_command(command: str, timeout: int = COMMAND_TIMEOUT, auto_respond: bool
             stdout = f"... (输出已截断，显示最后 {MAX_STDOUT_LENGTH} 字符)\n{stdout}"
         if len(stderr_full) > MAX_STDERR_LENGTH:
             stderr = f"... (输出已截断，显示最后 {MAX_STDERR_LENGTH} 字符)\n{stderr}"
+
+        # 推送最终块
+        if tool_call_id:
+            final_lines = stdout_lines[last_pushed_count:]
+            if final_lines:
+                push_command_stream(tool_call_id, command, final_lines, is_final=True, exit_code=proc.returncode)
 
         return json.dumps({
             "success": proc.returncode == 0,

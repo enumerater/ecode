@@ -11,6 +11,7 @@ from agent import build_graph
 from schemas import ChatRequest, ResumeRequest
 from session import get_session_manager
 from utils.sse import sse
+from tools.streaming import StreamingEvents
 
 app = FastAPI(title="AI Coding Agent")
 
@@ -89,6 +90,19 @@ async def stream_graph(input_data, config: dict):
                         "result": msg.content,
                     })
 
+                # 流式传输进度块（drain 非最终块）
+                for _chunk in StreamingEvents.drain():
+                    if not _chunk.is_final:
+                        yield sse("tool_result_chunk", {
+                            "tool_call_id": _chunk.tool_call_id,
+                            "tool_name": _chunk.tool_name,
+                            "content": _chunk.content,
+                            "seq": _chunk.seq,
+                            "total_chunks": _chunk.total_chunks,
+                            "is_final": _chunk.is_final,
+                            "meta": _chunk.meta,
+                        })
+
             elif typ == "updates":
                 # 中断（需要审批）
                 if "__interrupt__" in data:
@@ -101,7 +115,31 @@ async def stream_graph(input_data, config: dict):
                         if isinstance(node_output, dict) and "usage" in node_output:
                             accumulated_usage = node_output["usage"]
 
+            # 每次迭代末尾都 drain 流式块
+            for _chunk in StreamingEvents.drain():
+                if not _chunk.is_final:
+                    yield sse("tool_result_chunk", {
+                        "tool_call_id": _chunk.tool_call_id,
+                        "tool_name": _chunk.tool_name,
+                        "content": _chunk.content,
+                        "seq": _chunk.seq,
+                        "total_chunks": _chunk.total_chunks,
+                        "is_final": _chunk.is_final,
+                        "meta": _chunk.meta,
+                    })
+
         # 在 done 之前发送 token 用量
+        # 同时 drain 剩余流式块（包括 final 块）
+        for _chunk in StreamingEvents.drain():
+            yield sse("tool_result_chunk", {
+                "tool_call_id": _chunk.tool_call_id,
+                "tool_name": _chunk.tool_name,
+                "content": _chunk.content,
+                "seq": _chunk.seq,
+                "total_chunks": _chunk.total_chunks,
+                "is_final": _chunk.is_final,
+                "meta": _chunk.meta,
+            })
         yield sse("usage", accumulated_usage)
         yield sse("done", {"status": "ok"})
 

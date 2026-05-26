@@ -408,6 +408,69 @@ def format_tool_result(data):
         format_result_detail(tool_name, parsed)
 
 
+# 追踪每个 tool_call_id 的累积流式块内容
+_streaming_buffers: dict[str, str] = {}
+
+
+def format_tool_result_chunk(chunk, spinner=None):
+    """显示一个流式工具结果块。
+
+    根据工具类型显示不同的进度格式：
+    - view_file: "📄 正在读取 file.py... (行 1-100/1000)"
+    - run_command: 显示命令输出的最新几行
+    - search_code: "🔍 正在搜索... 已找到 N 处匹配"
+    """
+    tool_name = chunk.tool_name
+    tool_call_id = chunk.tool_call_id
+    meta = chunk.meta or {}
+    content = chunk.content
+
+    # 累积到缓冲区
+    _streaming_buffers.setdefault(tool_call_id, "")
+    _streaming_buffers[tool_call_id] += content
+
+    if tool_name == "view_file":
+        path = meta.get("path", "")
+        total = meta.get("total_lines", 0)
+        showing = meta.get("showing_lines", "")
+        seq = chunk.seq
+        total_chunks = chunk.total_chunks
+
+        if total:
+            # 显示进度：行号 / 总行数
+            progress = f"[dim]({showing}/{total} 行)[/dim]"
+        else:
+            progress = f"[dim]块 {seq + 1}/{total_chunks}[/dim]"
+
+        label = tool_label(tool_name)
+        path_short = path.split("/")[-1] if "/" in path else path.split("\\")[-1] if "\\" in path else path
+        if spinner:
+            spinner.set_state(TOOL_USE, f"{label}: {path_short}")
+        console.print(f"  [blue]...[/blue] {progress}")
+
+    elif tool_name == "run_command":
+        # 显示最后几行输出
+        lines = content.rstrip("\n").split("\n")
+        # 取最后 3 行显示
+        last_lines = lines[-3:]
+        if spinner:
+            command_short = meta.get("command", "")
+            spinner.set_state(TOOL_USE, f"运行命令")
+        for line in last_lines:
+            line = line.strip()
+            if line:
+                console.print(f"  [dim]|[/dim] {line[:120]}")
+
+    elif tool_name == "search_code":
+        total = meta.get("total", 0)
+        if total:
+            label = tool_label(tool_name)
+            pattern = meta.get("pattern", "")
+            if spinner:
+                spinner.set_state(TOOL_USE, f"{label}: \"{pattern[:30]}\"")
+            console.print(f"  [blue]...[/blue] [dim]已找到 {total} 处匹配[/dim]")
+
+
 def format_usage(data, elapsed=None):
     prompt = data.get("prompt_tokens", 0)
     completion = data.get("completion_tokens", 0)

@@ -21,8 +21,10 @@ from .display import (
     format_text, format_usage, format_error, format_time,
     tool_label, format_tool_call_args, format_result_detail,
     _brief_result_summary, show_task_list, show_question_form,
+    format_tool_result_chunk,
 )
 from .live_status import QuerySpinner, THINKING, TOOL_USE, RESPONDING
+from tools.streaming import StreamingEvents
 
 console = Console(force_terminal=True)
 
@@ -216,6 +218,15 @@ def _process_stream(input_data, config, thread_id, project_root):
                             spinner.stream_write(content)
                 except Exception as e:
                     pass
+
+            # ==============================================
+            # 流式工具结果块（由 StreamingEvents 推入）
+            # ==============================================
+            events = StreamingEvents.drain()
+            for chunk in events:
+                if chunk.is_final:
+                    continue  # final 块由 tool_result 事件承载
+                format_tool_result_chunk(chunk, spinner)
 
         # 流正常结束
         overall_elapsed = spinner.elapsed()

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
+from tools.streaming import STREAMING_TOOLS, chunk_result
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +92,27 @@ def _truncate_result(result: str) -> str:
     return result
 
 
-async def _run_tool_async(tool: BaseTool, args: dict) -> str:
-    """在线程池中运行同步工具，避免阻塞事件循环。"""
+async def _run_tool_async(tool: BaseTool, args: dict, tool_name: str = "", tool_call_id: str = "") -> str:
+    """在线程池中运行同步工具，避免阻塞事件循环。
+
+    对于流式工具（view_file, run_command, search_code），在大结果时自动
+    拆分并推入 StreamingEvents 队列，供 UI 层流式展示。
+    """
     try:
+        # 对 run_command 设置流式上下文，使其在轮询中能实时推流
+        if tool_name == "run_command" and tool_call_id:
+            try:
+                from tools.command_tools import _set_streaming_ctx
+                _set_streaming_ctx(tool_call_id)
+            except ImportError:
+                pass
+
         result = await asyncio.to_thread(tool.invoke, args)
-        return _truncate_result(result)
+        truncated = _truncate_result(result)
+        # 推流式块：仅当工具是流式工具且结果较大时
+        if tool_name and tool_call_id and tool_name in STREAMING_TOOLS:
+            chunk_result(tool_call_id, tool_name, result)
+        return truncated
     except Exception as e:
         return json.dumps({"success": False, "error": f"工具执行异常: {e}"}, ensure_ascii=False)
 
@@ -145,7 +162,7 @@ async def _execute_concurrent_batch(
                 ensure_ascii=False,
             ))())
         else:
-            async_tasks.append(_run_tool_async(tool, tc.args))
+            async_tasks.append(_run_tool_async(tool, tc.args, tool_name=tc.name, tool_call_id=tc.id))
 
     results_raw = await asyncio.gather(*async_tasks, return_exceptions=True)
 
@@ -251,7 +268,7 @@ async def _execute_serial_batch(
                 continue
 
         try:
-            result = await _run_tool_async(tool_map[tc.name], tc.args)
+            result = await _run_tool_async(tool_map[tc.name], tc.args, tool_name=tc.name, tool_call_id=tc.id)
             results.append(ToolMessage(content=result, tool_call_id=tc.id))
         except Exception as e:
             results.append(ToolMessage(
