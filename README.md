@@ -4,72 +4,34 @@
 
 **基于 LangGraph 的 AI 编程智能体**
 
-在终端中用自然语言操作你的项目 —— 读写文件、执行命令、管理 Git，全程自主完成
+在终端中用自然语言操作你的项目 -- 读写文件、执行命令、管理 Git，全程自主完成
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Powered-orange?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-Server-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-
-[English](#english) | 中文
 
 </div>
 
 ---
 
-## 为什么选择 ecode？
+## 简介
 
-ecode 是一个开源的终端 AI 编程智能体，类似于 Claude Code / Cursor / Aider，但完全可控 —— 你可以接入任何 OpenAI 兼容的 LLM（DeepSeek、通义千问、MiMo、商汤、OpenAI 等），数据不离开你的本地环境。
-
-<!-- 如果有终端录屏 GIF，放在这里 -->
-<!-- ![ecode demo](./docs/demo.gif) -->
-
----
+ecode 是一个开源的终端 AI 编程智能体，类似于 Claude Code / Cursor / Aider，但完全可控 -- 你可以接入任何 OpenAI 兼容的 LLM（DeepSeek、通义千问、OpenAI 等），数据不离开本地环境。
 
 ## 功能特性
 
-<table>
-<tr>
-<td width="50%">
-
-### 文件与代码
-- 读取、编辑、写入、创建文件和目录
-- 正则搜索 + glob 过滤，快速定位代码
-- 基于 diff 的精准编辑，不重写整个文件
-
-### 命令与 Git
-- 执行任意 Shell 命令，支持超时控制
-- Git 全流程：status / diff / log / blame / commit
-- 交互式命令自动应答
-
-### 智能上下文
-- 5 层上下文压缩，长对话不丢上下文
-- Token 实时估算，自动触发压缩
-- KV Cache 优化，减少重复计算
-
-</td>
-<td width="50%">
-
-### 权限与安全
-- 4 种权限模式：default / plan / auto_approve / yolo
-- 细粒度规则引擎，glob + 正则匹配
-- 逐工具审批，diff 预览后再确认
-
-### 协作与记忆
-- 跨会话记忆系统，持久化用户偏好
-- 项目上下文文件（`.ecode.md`）
-- LLM 自动提取对话中的关键信息
-
-### 扩展性
-- Hook 系统：工具调用前后自定义脚本
-- 子智能体：生成只读子代理聚焦分析
-- SSE 流式 API，接入自定义前端
-
-</td>
-</tr>
-</table>
-
----
+| 类别 | 能力 |
+|:-----|:-----|
+| **文件操作** | 读取、编辑、写入、创建文件和目录；正则搜索 + glob 过滤；基于 diff 的精准编辑 |
+| **命令执行** | 任意 Shell 命令，支持超时控制和交互式应答 |
+| **Git 集成** | status / diff / log / blame / commit 全流程 |
+| **上下文管理** | 5 层压缩策略，Token 实时估算，KV Cache 优化 |
+| **权限系统** | 4 种模式（default / plan / auto_approve / yolo），细粒度规则引擎 |
+| **记忆系统** | 跨会话持久化，LLM 自动提取关键信息 |
+| **任务规划** | Plan 模式 + 任务分解，支持后台任务 |
+| **子智能体** | 生成只读子代理聚焦分析 |
+| **Hook 系统** | 工具调用前后执行自定义脚本 |
+| **SSE API** | 流式接口，可接入自定义前端 |
 
 ## 快速开始
 
@@ -86,12 +48,9 @@ cd your-project
 ecode
 ```
 
-首次运行自动弹出初始化向导，选择 LLM 提供商、输入 API Key，即刻开始。
+首次运行自动弹出初始化向导，选择 LLM 提供商、输入 API Key 即可开始。
 
 ### 手动配置
-
-<details>
-<summary>点击展开配置方式</summary>
 
 **方式一：config.yaml**
 
@@ -117,10 +76,6 @@ export ECODE_API_KEY="your-api-key"
 export ECODE_MODEL="deepseek-chat"
 export ECODE_BASE_URL="https://api.deepseek.com/v1"
 ```
-
-</details>
-
----
 
 ## 使用方法
 
@@ -177,8 +132,6 @@ python main.py
 | `/api/sessions/{id}` | `DELETE` | 删除会话 |
 | `/api/sessions/{id}/history` | `GET` | 会话历史 |
 
----
-
 ## 支持的 LLM
 
 ecode 通过 OpenAI 兼容接口连接 LLM，接入任何兼容服务商只需改配置：
@@ -190,9 +143,7 @@ ecode 通过 OpenAI 兼容接口连接 LLM，接入任何兼容服务商只需�
 | **小米 MiMo** | `mimo-v2.5-pro` | `https://token-plan-cn.xiaomimimo.com/v1` |
 | **商汤日日新** | `deepseek-v4-flash` | `https://token.sensenova.cn/v1` |
 | **OpenAI** | `gpt-4o` / `gpt-4o-mini` | `https://api.openai.com/v1` |
-| **任意兼容服务** | — | 对应 API 地址 |
-
----
+| **任意兼容服务** | -- | 对应 API 地址 |
 
 ## 项目结构
 
@@ -206,12 +157,14 @@ ecode/
 ├── settings.py                 # 多层级设置合并
 ├── project_context.py          # .ecode.md 项目上下文
 ├── schemas.py                  # Pydantic 数据模型
+│
 ├── cli/                        # CLI 终端界面
 │   ├── chat.py                 #   主循环、斜杠命令、审批
 │   ├── display.py              #   Rich 渲染引擎
 │   ├── approval.py             #   审批详情（diff / 预览）
 │   ├── interactions.py         #   输入、菜单、粘贴处理
 │   └── live_status.py          #   实时状态指示器
+│
 ├── tools/                      # 工具集（27 个工具）
 │   ├── file_tools.py           #   文件操作
 │   ├── search_tools.py         #   搜索与浏览
@@ -222,22 +175,42 @@ ecode/
 │   ├── task_plan_tools.py      #   任务规划
 │   ├── tool_executor.py        #   并行执行引擎
 │   └── tool_index.py           #   工具索引表
+│
 ├── permissions/                # 权限系统
 │   ├── modes.py                #   4 种权限模式
 │   └── rules.py                #   规则引擎
+│
 ├── hooks/                      # Hook 系统
 │   ├── executor.py             #   Hook 执行引擎
 │   └── types.py                #   事件类型定义
+│
 ├── memory/                     # 记忆系统
 │   ├── loader.py               #   记忆加载
 │   ├── writer.py               #   记忆写入
 │   └── extractor.py            #   LLM 记忆提取
-├── tasks/                      # 后台任务管理
+│
 ├── context/                    # Token 计数
-└── utils/                      # 工具函数
+│   └── token_counter.py
+│
+├── tasks/                      # 后台任务管理
+├── utils/                      # 工具函数
+│
+├── tests/                      # 测试
+│   ├── test_cli.py             #   CLI 渲染测试
+│   ├── test_e2e.py             #   端到端演示
+│   └── test_stream.py          #   流式输出测试
+│
+├── scripts/                    # 开发脚本
+│   └── debug/                  #   调试工具
+│
+├── docs/                       # 文档
+│   └── architecture.md         #   架构设计文档
+│
+├── config.yaml.example         # 配置文件模板
+├── pyproject.toml              # 项目元数据与构建配置
+├── requirements.txt            # Python 依赖
+└── LICENSE                     # MIT 许可证
 ```
-
----
 
 ## 配置参考
 
@@ -314,13 +287,9 @@ llm:
 
 </details>
 
----
-
 ## 架构文档
 
 详细的系统架构、模块设计、数据流分析请参阅 [docs/architecture.md](docs/architecture.md)。
-
----
 
 ## 开发
 
@@ -333,31 +302,11 @@ ecode
 
 # 运行 API 服务
 python main.py
-```
 
----
+# 运行测试
+python -m tests.test_cli
+```
 
 ## License
 
 [MIT](LICENSE)
-
----
-
-<div id="english"></div>
-
-<details>
-<summary><strong>English</strong></summary>
-
-**ecode** is an open-source AI coding agent powered by LangGraph. Interact with your codebase through natural language in the terminal — read, search, edit files, run commands, manage Git, all autonomously.
-
-**Features:** File operations, shell execution, Git integration, 5-layer context compression, 4 permission modes, plan mode, task planning, sub-agents, background tasks, cross-session memory, hook system, and SSE streaming API.
-
-**Quick Start:**
-```bash
-pip install ecode-agent
-cd your-project && ecode
-```
-
-Supports any OpenAI-compatible LLM: DeepSeek, Qwen, MiMo, SenseNova, OpenAI, and more.
-
-</details>

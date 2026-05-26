@@ -11,7 +11,7 @@ import json
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 from context_manager import estimate_tokens, MAX_TOKENS
