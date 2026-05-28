@@ -52,4 +52,4 @@ ecode = "cli.chat:main"
 include = ["cli*", "tools*", "memory*", "hooks*", "permissions*", "tasks*", "utils*"]
 
 [tool.setuptools]
-py-modules = ["agent", "model", "session", "schemas", "settings", "context_manager", "project_context"]
+py-modules = ["agent", "model", "session", "schemas", "settings", "context_manager", "project_context", "task_store"]

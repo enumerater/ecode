@@ -26,7 +26,11 @@
       "Bash(dir \"E:\\\\111_claude_source\\\\buildable-fork\\\\src\\\\tools\" /b)",
       "Bash(findstr /i \"skill\")",
       "Bash(dir /s /b \"E:\\\\111_claude_source\\\\buildable-fork\\\\src\\\\tools\")",
-      "Bash(findstr /i \"Skill\")"
+      "Bash(findstr /i \"Skill\")",
+      "Bash(conda run *)",
+      "Bash(D:\\\\Anaconda\\\\envs\\\\clawclaw\\\\python.exe *)",
+      "PowerShell(D:\\\\Anaconda\\\\envs\\\\clawclaw\\\\python.exe -c \"from task_store import task_store; print\\('OK:', task_store\\)\")",
+      "PowerShell(D:\\\\Anaconda\\\\envs\\\\clawclaw\\\\python.exe -c \"import cli.chat; print\\('Import OK'\\)\")"
     ]
   }
 }
