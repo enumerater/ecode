@@ -4,6 +4,7 @@ import sys
 from datetime import datetime, timezone
 from rich.console import Console
 from rich.panel import Panel
+from .live_status import TOOL_USE
 
 console = Console(force_terminal=True)
 
