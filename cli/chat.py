@@ -83,7 +83,16 @@ def _process_stream(input_data, config, thread_id, project_root):
     spinner = QuerySpinner()
     spinner.start()
     pending_tools = {}
-    last_tasks = None  # 跟踪任务状态变化
+
+    # 订阅 TaskStore：任务变化时实时更新 spinner 和显示任务列表
+    from task_store import task_store
+    task_store.reset()  # 新查询时清空上一轮任务
+    def _on_task_update(tasks):
+        spinner.set_task_info(tasks)
+        spinner.stop()
+        show_task_list(tasks)
+        spinner.start()
+    unsubscribe_tasks = task_store.subscribe(_on_task_update)
 
     try:
         for chunk in graph.stream(
@@ -135,17 +144,6 @@ def _process_stream(input_data, config, thread_id, project_root):
 
                     if "usage" in node_data:
                         accumulated_usage = node_data["usage"]
-
-                    # 检测任务状态变化
-                    if "tasks" in node_data:
-                        new_tasks = node_data["tasks"]
-                        if new_tasks != last_tasks:
-                            last_tasks = new_tasks
-                            spinner.set_task_info(new_tasks)
-                            # 暂停 spinner 显示任务列表
-                            spinner.stop()
-                            show_task_list(new_tasks)
-                            spinner.start()
 
             # ==============================================
             # messages 流：工具调用和结果
@@ -235,6 +233,7 @@ def _process_stream(input_data, config, thread_id, project_root):
     finally:
         spinner.stream_end()
         spinner.stop()
+        unsubscribe_tasks()
 
 
 def _build_result_summary(tool_name: str, data: dict) -> str:

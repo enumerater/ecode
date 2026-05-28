@@ -12,6 +12,7 @@ from schemas import ChatRequest, ResumeRequest
 from session import get_session_manager
 from utils.sse import sse
 from tools.streaming import StreamingEvents
+from task_store import task_store
 
 app = FastAPI(title="AI Coding Agent")
 
@@ -28,6 +29,15 @@ graph = build_graph()
 
 async def stream_graph(input_data, config: dict):
     """共享的 SSE 流生成器，供 chat/stream 和 chat/resume 使用。"""
+    # 订阅 TaskStore，用 asyncio.Queue 桥接线程回调 → async 生成器
+    task_queue: asyncio.Queue = asyncio.Queue()
+
+    def _on_task_update(tasks):
+        # 在线程中调用，通过 queue 传到 async 循环
+        task_queue.put_nowait(tasks)
+
+    unsubscribe_tasks = task_store.subscribe(_on_task_update)
+
     try:
         accumulated_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
@@ -128,6 +138,13 @@ async def stream_graph(input_data, config: dict):
                         "meta": _chunk.meta,
                     })
 
+            # drain 任务更新事件
+            while not task_queue.empty():
+                tasks = task_queue.get_nowait()
+                yield sse("task_update", {
+                    "tasks": [{"id": t.id, "subject": t.subject, "activeForm": t.active_form, "status": t.status} for t in tasks],
+                })
+
         # 在 done 之前发送 token 用量
         # 同时 drain 剩余流式块（包括 final 块）
         for _chunk in StreamingEvents.drain():
@@ -146,6 +163,8 @@ async def stream_graph(input_data, config: dict):
     except Exception as e:
         yield sse("error", {"message": str(e)})
         yield sse("done", {"status": "error"})
+    finally:
+        unsubscribe_tasks()
 
 
 # ─── POST /api/chat/stream ───

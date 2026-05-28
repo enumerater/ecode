@@ -125,7 +125,6 @@ class AgentState(TypedDict):
     immutable_context_key: str                  # 缓存 key（用于 KV cache 优化）
     permission_mode: str                        # 当前权限模式
     plan_mode: bool                             # 是否处于计划模式
-    tasks: list                                 # 任务规划列表
     session_approved: bool                      # 用户是否选择了"会话内全部同意"
 ```
 
@@ -133,7 +132,7 @@ class AgentState(TypedDict):
 
 1. **构建不可变系统提示** — 项目上下文（`.ecode.md`）+ 记忆 + 工具索引 + 工作规则
 2. **应用上下文压缩** — 三层：micro（每轮）、auto（token 超限）、reactive（API 报错）
-3. **注入任务进度** — 如果有进行中的任务，将进度信息加入提示
+3. **注入任务进度** — 从 TaskStore 读取当前任务列表，将进度信息加入提示
 4. **调用 LLM** — 通过 `ChatOpenAI.bind_tools()` 绑定工具集
 5. **错误处理** — prompt-too-long 时触发 reactive compact 后重试
 
@@ -142,7 +141,7 @@ class AgentState(TypedDict):
 1. **工具调用分批** — 通过 `tool_executor.py` 将工具调用分为并行批和串行批
 2. **权限检查** — 每个工具调用前检查权限规则
 3. **人工审批** — 危险操作通过 LangGraph `interrupt` 暂停，等待用户确认
-4. **特殊信号处理** — compact、计划模式切换、任务更新、用户提问
+4. **特殊信号处理** — compact、计划模式切换、用户提问（任务系统通过 TaskStore 事件总线独立处理）
 
 ---
 
@@ -471,8 +470,10 @@ GET /api/sessions/{session_id}/history
 | `text` | LLM 文本输出（流式 token） |
 | `tool_call` | 工具调用请求 |
 | `tool_result` | 工具执行结果 |
+| `tool_result_chunk` | 流式工具结果进度 |
+| `task_update` | 任务状态变化（通过 TaskStore 事件总线） |
 | `usage` | Token 用量统计 |
-| `interrupt` | 需要人工审批 |
+| `approval_required` | 需要人工审批 |
 | `error` | 错误信息 |
 | `done` | 对话结束 |
 

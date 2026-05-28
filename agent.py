@@ -14,7 +14,6 @@ from langgraph.types import interrupt
 from session import get_checkpointer
 from tools import ALL_TOOLS, SAFE_TOOLS, DANGEROUS_TOOLS, TOOL_META, set_project_root
 from tools.context_tools import COMPACT_SIGNAL
-from tools.task_plan_tools import TASK_SIGNAL
 from tools.tool_index import build_tool_index
 from tools.tool_executor import execute_tool_batches
 from context_manager import micro_compact, auto_compact, manual_compact, reactive_compact, truncate_large_results
@@ -178,7 +177,6 @@ class State(TypedDict):
     immutable_context_key: str  # 跟踪 immutable_context 对应的模式（plan/default）
     permission_mode: str  # 权限模式：default, plan, auto_approve, yolo
     plan_mode: bool  # 是否处于计划模式
-    tasks: list  # 任务规划列表 [{"id", "subject", "activeForm", "status"}]
     session_approved: bool  # 用户选择"全部同意"后，会话内所有工具自动批准
 
 
@@ -273,13 +271,14 @@ def think(state: State) -> dict:
     else:
         full_messages = [SystemMessage(content=immutable_ctx)] + messages
 
-    # ── 任务上下文：将当前任务列表注入消息 ──
-    tasks = state.get("tasks")
+    # ── 任务上下文：从 TaskStore 读取当前任务列表注入消息 ──
+    from task_store import task_store
+    tasks = task_store.list()
     if tasks:
         task_lines = []
         for t in tasks:
-            status_icon = {"pending": "○", "in_progress": "▶", "completed": "✓"}.get(t["status"], "○")
-            task_lines.append(f"  {status_icon} [{t['status']}] {t['subject']} (id: {t['id']})")
+            status_icon = {"pending": "○", "in_progress": "▶", "completed": "✓"}.get(t.status, "○")
+            task_lines.append(f"  {status_icon} [{t.status}] {t.subject} (id: {t.id})")
         task_context = SystemMessage(content="## 当前任务进度\n\n" + "\n".join(task_lines))
         full_messages.insert(1, task_context)
 
@@ -402,7 +401,6 @@ def execute_tools(state: State) -> dict:
     # 处理 compact 信号、plan mode 信号、任务信号、问题信号
     plan_mode_enter = False
     plan_mode_exit = False
-    task_updates = []  # 收集任务操作
     ask_question_data = None  # 收集问题数据
 
     for i, tc in enumerate(last.tool_calls):
@@ -435,15 +433,6 @@ def execute_tools(state: State) -> dict:
                             plan_mode_exit = True
                     except (json.JSONDecodeError, TypeError):
                         pass
-        elif tc["name"] in ("create_task", "update_task", "list_tasks"):
-            for msg in results:
-                if msg.tool_call_id == tc["id"]:
-                    try:
-                        signal_data = json.loads(msg.content)
-                        if signal_data.get("signal") == TASK_SIGNAL:
-                            task_updates.append(signal_data)
-                    except (json.JSONDecodeError, TypeError):
-                        pass
         elif tc["name"] == "ask_user_question":
             for msg in results:
                 if msg.tool_call_id == tc["id"]:
@@ -456,74 +445,6 @@ def execute_tools(state: State) -> dict:
 
     # Layer 3: 处理 compact 信号 — 生成摘要并存入 state
     final_update = {"messages": results}
-
-    # 处理任务信号 — 更新 state 中的 tasks 列表，并替换 ToolMessage 为友好结果
-    if task_updates:
-        current_tasks = list(state.get("tasks") or [])
-        for upd in task_updates:
-            action = upd.get("action")
-            if action == "create":
-                task = upd.get("task")
-                if task:
-                    current_tasks.append(task)
-                    logger.info(f"创建任务: {task['subject']} ({task['id']})")
-                    # 替换 ToolMessage 为友好结果
-                    for i, msg in enumerate(results):
-                        if hasattr(msg, 'tool_call_id'):
-                            for tc in last.tool_calls:
-                                if tc["name"] == "create_task" and msg.tool_call_id == tc["id"]:
-                                    results[i] = ToolMessage(
-                                        content=json.dumps({
-                                            "success": True,
-                                            "task": task,
-                                            "message": f"任务已创建: {task['subject']} (id: {task['id']})",
-                                        }, ensure_ascii=False),
-                                        tool_call_id=msg.tool_call_id,
-                                    )
-                                    break
-            elif action == "update":
-                task_id = upd.get("task_id")
-                for t in current_tasks:
-                    if t["id"] == task_id:
-                        if "status" in upd:
-                            t["status"] = upd["status"]
-                        if "subject" in upd:
-                            t["subject"] = upd["subject"]
-                        if "activeForm" in upd:
-                            t["activeForm"] = upd["activeForm"]
-                        logger.info(f"更新任务 {task_id}: status={t['status']}")
-                        # 替换 ToolMessage 为友好结果
-                        for i, msg in enumerate(results):
-                            if hasattr(msg, 'tool_call_id'):
-                                for tc in last.tool_calls:
-                                    if tc["name"] == "update_task" and msg.tool_call_id == tc["id"]:
-                                        results[i] = ToolMessage(
-                                            content=json.dumps({
-                                                "success": True,
-                                                "task_id": task_id,
-                                                "status": t["status"],
-                                                "message": f"任务 {task_id} 已更新: {t['status']}",
-                                            }, ensure_ascii=False),
-                                            tool_call_id=msg.tool_call_id,
-                                        )
-                                        break
-                        break
-            elif action == "list":
-                # list_tasks: 替换 ToolMessage 为当前任务列表
-                for i, msg in enumerate(results):
-                    if hasattr(msg, 'tool_call_id'):
-                        for tc in last.tool_calls:
-                            if tc["name"] == "list_tasks" and msg.tool_call_id == tc["id"]:
-                                results[i] = ToolMessage(
-                                    content=json.dumps({
-                                        "success": True,
-                                        "tasks": current_tasks,
-                                        "message": f"共 {len(current_tasks)} 个任务",
-                                    }, ensure_ascii=False),
-                                    tool_call_id=msg.tool_call_id,
-                                )
-                                break
-        final_update["tasks"] = current_tasks
 
     # ask_user_question 的 interrupt 在 tool_executor 中处理，这里只记录日志
     if ask_question_data:

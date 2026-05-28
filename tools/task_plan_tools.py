@@ -1,12 +1,11 @@
-"""任务规划工具：让 agent 将复杂任务分解为多个步骤并跟踪执行进度。"""
+"""任务规划工具：让 agent 将复杂任务分解为多个步骤并跟踪执行进度。
 
-import json
-import uuid
+工具做纯 CRUD 操作，通过 TaskStore 事件总线通知 UI。
+"""
+
 from langchain_core.tools import tool
 
-
-# 任务信号常量
-TASK_SIGNAL = "TASK_UPDATE"
+from task_store import task_store
 
 
 @tool
@@ -20,17 +19,8 @@ def create_task(subject: str, active_form: str = "") -> str:
         subject: 任务标题（如 "分析项目结构"、"编写数据模型"）
         active_form: 执行中显示的文本（如 "正在分析项目结构"），为空时使用 subject
     """
-    task_id = str(uuid.uuid4())[:8]
-    return json.dumps({
-        "signal": TASK_SIGNAL,
-        "action": "create",
-        "task": {
-            "id": task_id,
-            "subject": subject,
-            "activeForm": active_form or subject,
-            "status": "pending",
-        },
-    }, ensure_ascii=False)
+    task = task_store.create(subject, active_form)
+    return f"任务已创建: {task.subject} (id: {task.id})"
 
 
 @tool
@@ -45,14 +35,13 @@ def update_task(task_id: str, status: str = "", subject: str = "", active_form: 
         subject: 更新任务标题（可选）
         active_form: 更新执行中显示文本（可选）
     """
-    update_data = {"signal": TASK_SIGNAL, "action": "update", "task_id": task_id}
+    task = task_store.update(task_id, status=status, subject=subject, active_form=active_form)
+    if not task:
+        return f"任务 {task_id} 不存在"
+    parts = [f"任务 {task_id} 已更新"]
     if status:
-        update_data["status"] = status
-    if subject:
-        update_data["subject"] = subject
-    if active_form:
-        update_data["activeForm"] = active_form
-    return json.dumps(update_data, ensure_ascii=False)
+        parts.append(f"状态: {status}")
+    return ", ".join(parts)
 
 
 @tool
@@ -61,7 +50,11 @@ def list_tasks() -> str:
 
     用于查看任务规划的整体进度。
     """
-    return json.dumps({
-        "signal": TASK_SIGNAL,
-        "action": "list",
-    }, ensure_ascii=False)
+    tasks = task_store.list()
+    if not tasks:
+        return "当前没有任务"
+    lines = [f"共 {len(tasks)} 个任务:"]
+    for t in tasks:
+        icon = {"pending": "○", "in_progress": "▶", "completed": "✓"}.get(t.status, "○")
+        lines.append(f"  {icon} [{t.status}] {t.subject} (id: {t.id})")
+    return "\n".join(lines)

@@ -14,7 +14,7 @@ from tools.task_plan_tools import create_task, update_task, list_tasks
 from tools.ask_user_question_tool import ask_user_question
 
 # ── 工具分类集合（向后兼容）──
-SAFE_TOOLS = {"view_file", "search_code", "list_files", "compact", "get_tool_details", "git_status", "git_diff", "git_log", "git_blame", "save_memory", "list_memories", "get_task_status", "list_background_tasks", "list_tasks"}
+SAFE_TOOLS = {"view_file", "search_code", "list_files", "compact", "get_tool_details", "git_status", "git_diff", "git_log", "git_blame", "save_memory", "list_memories", "get_task_status", "list_background_tasks", "create_task", "update_task", "list_tasks"}
 DANGEROUS_TOOLS = {"edit_file", "write_file", "create_file", "create_directory", "run_command", "git_commit", "enter_plan_mode", "exit_plan_mode", "run_agent", "create_background_task", "kill_background_task", "ask_user_question"}
 ALL_TOOLS = [view_file, edit_file, write_file, create_file, create_directory, search_code, list_files, run_command, compact, get_tool_details, git_status, git_diff, git_log, git_commit, git_blame, save_memory, list_memories, enter_plan_mode, exit_plan_mode, run_agent, create_background_task, get_task_status, list_background_tasks, kill_background_task, create_task, update_task, list_tasks, ask_user_question]
 
