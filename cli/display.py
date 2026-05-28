@@ -301,6 +301,7 @@ def show_help():
         ("/plan", "切换计划模式"),
         ("/storage", "切换存储后端 (memory/mysql)"),
         ("/compact", "手动压缩上下文"),
+        ("/skills", "管理 Skill 启用/禁用"),
         ("/clear", "清屏"),
         ("/exit", "退出"),
     ]

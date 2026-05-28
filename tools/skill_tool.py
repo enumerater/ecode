@@ -18,8 +18,10 @@ def skill(name: str, arguments: str = "") -> str:
     """
     from skills.store import skill_store
 
-    s = skill_store.get(name)
+    s = skill_store.get_enabled(name)
     if not s:
+        if skill_store.get(name):
+            return f"skill '{name}' 已被禁用。用户可通过 /skills 命令启用。"
         available = ", ".join(skill_store.get_skill_names())
         return f"skill '{name}' 不存在。可用的 skill: {available}"
 

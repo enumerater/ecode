@@ -15,7 +15,7 @@ from agent import build_graph
 from session import get_session_manager, switch_storage, get_storage_backend, SUPPORTED_BACKENDS
 from permissions.modes import PermissionMode, MODE_DESCRIPTIONS
 from context_manager import estimate_tokens, MAX_TOKENS, manual_compact
-from .interactions import prompt_input, select_one, confirm, set_slash_commands, supplement_input, select_options, set_mode_toggle_callback
+from .interactions import prompt_input, select_one, confirm, set_slash_commands, supplement_input, select_options, select_multi, set_mode_toggle_callback
 from .display import (
     show_banner, show_session_info, show_help,
     format_text, format_usage, format_error, format_time,
@@ -652,7 +652,7 @@ def start_chat():
     skill_store.load_all(project_root)
 
     # 内置命令 + skill 名称
-    builtin_cmds = ["help", "init", "sessions", "switch", "new", "delete", "history", "clear", "exit", "mode", "plan", "storage", "compact"]
+    builtin_cmds = ["help", "init", "sessions", "switch", "new", "delete", "history", "clear", "exit", "mode", "plan", "storage", "compact", "skills"]
     skill_cmds = [s.name for s in skill_store.list_user_invocable()]
     set_slash_commands(builtin_cmds + skill_cmds)
 
@@ -803,10 +803,34 @@ def start_chat():
             elif cmd == "/exit":
                 console.print("再见！")
                 break
+            elif cmd == "/skills":
+                # 管理 skill 启用/禁用
+                all_skills = skill_store.get_all()
+                if not all_skills:
+                    console.print("[dim]没有已加载的 skill[/dim]")
+                else:
+                    options = [
+                        {
+                            "value": s.name,
+                            "label": f"/{s.name.ljust(12)} {s.source:8s} {s.description}",
+                            "checked": skill_store.is_enabled(s.name),
+                        }
+                        for s in all_skills
+                    ]
+                    selected = select_multi(options, "选择要启用的 Skill：")
+                    if selected is not None:
+                        enabled_set = set(selected)
+                        for s in all_skills:
+                            skill_store.set_enabled(s.name, s.name in enabled_set)
+                        skill_store.save_disabled(project_root)
+                        # 刷新 slash commands
+                        skill_cmds = [s.name for s in skill_store.list_user_invocable()]
+                        set_slash_commands(builtin_cmds + skill_cmds)
+                        console.print(f"[green]已启用 {len(enabled_set)} 个 skill[/green]")
             else:
                 # 检查是否为 skill 命令
                 skill_name = cmd.lstrip("/")
-                skill = skill_store.get(skill_name)
+                skill = skill_store.get_enabled(skill_name)
                 if skill and skill.user_invocable:
                     # 提取参数（命令名之后的部分）
                     parts = trimmed.split(None, 1)

@@ -291,8 +291,8 @@ def select_one(options, message="选择："):
 def select_multi(options, message="选择（空格切换，Enter 确认）："):
     """多选菜单。上下箭头移动，空格切换选中，Enter 确认。
 
-    options: [{"value": str, "label": str}, ...]
-    Returns: 选中的 value 列表
+    options: [{"value": str, "label": str, "checked": bool}, ...]
+    Returns: 选中的 value 列表，Esc 返回 None
     """
     if not options:
         return []
@@ -300,7 +300,7 @@ def select_multi(options, message="选择（空格切换，Enter 确认）："):
     import msvcrt
 
     idx = 0
-    checked = set()
+    checked = {opt["value"]: opt.get("checked", False) for opt in options}
     rendered_lines = 0
 
     def _render():
@@ -310,7 +310,8 @@ def select_multi(options, message="选择（空格切换，Enter 确认）："):
         lines = []
         lines.append(clr(message, "bold"))
         for i, opt in enumerate(options):
-            mark = clr("✓", "green") if opt["value"] in checked else clr("○", "dim")
+            v = opt["value"]
+            mark = clr("✓", "green") if checked[v] else clr("○", "dim")
             if i == idx:
                 lines.append(f"  {clr('▶', 'cyan')} {mark} {clr(opt['label'], 'bold')}")
             else:
@@ -332,22 +333,24 @@ def select_multi(options, message="选择（空格切换，Enter 确认）："):
                 idx = (idx + 1) % len(options)
             _render()
         elif key == b' ':  # 空格切换
-            val = options[idx]["value"]
-            if val in checked:
-                checked.discard(val)
-            else:
-                checked.add(val)
+            v = options[idx]["value"]
+            checked[v] = not checked[v]
             _render()
         elif key == b'\r':  # Enter
             for _ in range(rendered_lines):
                 sys.stdout.write("\033[A\033[K")
             sys.stdout.flush()
-            return [opt["value"] for opt in options if opt["value"] in checked]
+            return [v for v, c in checked.items() if c]
         elif key == b'\x1b':  # Esc
             for _ in range(rendered_lines):
                 sys.stdout.write("\033[A\033[K")
             sys.stdout.flush()
-            return []
+            return None
+        elif key == b'\x03':  # Ctrl+C
+            for _ in range(rendered_lines):
+                sys.stdout.write("\033[A\033[K")
+            sys.stdout.flush()
+            return None
 
 
 # ── 确认对话 ──────────────────────────────────────────────────────────────

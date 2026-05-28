@@ -107,3 +107,16 @@ class Settings:
     def get(self, key: str, default=None) -> Any:
         """获取额外设置。"""
         return self._extra.get(key, default)
+
+    def get_disabled_skills(self) -> list[str]:
+        """获取禁用的 skill 列表。"""
+        return list(self._extra.get("disabled_skills", []))
+
+    def set_disabled_skills(self, disabled: list[str]):
+        """设置禁用的 skill 列表并持久化到项目级 settings.json。"""
+        project_path = Path(self.project_root) / PROJECT_SETTINGS_FILE
+        data = _load_json_file(project_path)
+        data["disabled_skills"] = disabled
+        project_path.parent.mkdir(parents=True, exist_ok=True)
+        project_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._extra["disabled_skills"] = disabled
