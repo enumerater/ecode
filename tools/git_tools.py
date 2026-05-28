@@ -110,9 +110,9 @@ def git_diff(path: str = "", cached: bool = False) -> str:
         return json.dumps(result, ensure_ascii=False)
 
     diff = result.get("stdout", "")
-    # 截断过长的 diff
-    if len(diff) > 10000:
-        diff = diff[:5000] + f"\n\n... [diff 已截断，原长 {len(diff)} 字符] ...\n\n" + diff[-5000:]
+    # 截断过长的 diff（减少token消耗）
+    if len(diff) > 5000:  # 从10000降到5000
+        diff = diff[:2500] + f"\n\n... [diff 已截断，原长 {len(diff)} 字符] ...\n\n" + diff[-2500:]
 
     return json.dumps({
         "success": True,
@@ -136,10 +136,10 @@ def git_log(count: int = 10, path: str = "") -> str:
     from tools import get_project_root
     cwd = get_project_root()
 
-    count = min(max(count, 1), 50)
+    count = min(max(count, 1), 20)  # 从50降到20，减少token消耗
     args = [
         "log", f"--max-count={count}",
-        "--format=%H|%an|%ae|%at|%s",
+        "--format=%H|%an|%at|%s",  # 移除email字段，减少输出
         "--no-color",
     ]
     if path:
@@ -153,14 +153,13 @@ def git_log(count: int = 10, path: str = "") -> str:
     for line in result.get("stdout", "").split("\n"):
         if not line.strip():
             continue
-        parts = line.split("|", 4)
-        if len(parts) >= 5:
+        parts = line.split("|", 3)
+        if len(parts) >= 4:
             commits.append({
                 "hash": parts[0][:8],
                 "author": parts[1],
-                "email": parts[2],
-                "timestamp": int(parts[3]),
-                "message": parts[4],
+                "timestamp": int(parts[2]),
+                "message": parts[3][:100],  # 限制提交信息长度
             })
 
     return json.dumps({

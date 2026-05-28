@@ -17,8 +17,8 @@ from tools.streaming import STREAMING_TOOLS, chunk_result
 
 logger = logging.getLogger(__name__)
 
-# 工具结果最大字符数
-MAX_TOOL_RESULT_CHARS = 8000
+# 工具结果最大字符数（从8000降到4000，减少token消耗）
+MAX_TOOL_RESULT_CHARS = 4000
 
 
 @dataclass

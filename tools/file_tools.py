@@ -4,7 +4,8 @@ from langchain_core.tools import tool
 
 @tool
 def view_file(path: str, start_line: int = 0, end_line: int = -1) -> str:
-    """读取并返回文件内容。path 相对于项目根目录。可选 start_line 和 end_line 指定行范围（从1开始，包含两端）。"""
+    """读取并返回文件内容。path 相对于项目根目录。可选 start_line 和 end_line 指定行范围（从1开始，包含两端）。
+    注意：大文件会自动限制返回行数（默认最多200行），请通过 start_line/end_line 指定需要的范围。"""
     from tools import get_project_root, resolve_safe_path
 
     resolved, err = resolve_safe_path(get_project_root(), path)
@@ -26,6 +27,12 @@ def view_file(path: str, start_line: int = 0, end_line: int = -1) -> str:
         start = total
     if end < start:
         end = start
+
+    # 限制返回行数，避免大文件消耗过多token（默认最多200行）
+    MAX_DISPLAY_LINES = 200
+    if end - start + 1 > MAX_DISPLAY_LINES:
+        end = start + MAX_DISPLAY_LINES - 1
+        logger.warning(f"文件 {path} 行数过多，自动限制显示 {MAX_DISPLAY_LINES} 行（{start}-{end}）")
 
     selected = lines[start - 1:end]
     numbered = "\n".join(f"{i:4d} | {line}" for i, line in enumerate(selected, start))

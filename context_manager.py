@@ -1,10 +1,11 @@
-"""五层上下文压缩管理器。
+"""六层上下文压缩管理器。
 
 Layer 1: micro_compact — 每轮自动，替换旧工具结果为占位符
 Layer 2: auto_compact  — token 超阈值时调用 LLM 生成摘要
 Layer 3: Manual compact — Agent 通过 compact 工具主动触发（见 tools/context_tools.py）
 Layer 4: reactive_compact — prompt-too-long 错误时自动触发
 Layer 5: snip_compact — 移除对话中间大段内容，保留首尾
+Layer 6: truncate_large_results — 截断大段工具输出（新增）
 """
 
 import json
@@ -17,9 +18,9 @@ from langchain_core.messages import (
 logger = logging.getLogger(__name__)
 
 # ── 配置 ──────────────────────────────────────────────────────────────
-MAX_TOKENS = 200000           # 触发 Auto-Compact 的 token 阈值
-KEEP_RECENT_MESSAGES = 20     # 压缩时保留的最近消息数
-MICRO_COMPACT_AFTER_TURNS = 3  # N 轮前的工具结果触发微压缩
+MAX_TOKENS = 80000            # 触发 Auto-Compact 的 token 阈值（从200k降到80k）
+KEEP_RECENT_MESSAGES = 15     # 压缩时保留的最近消息数（从20降到15）
+MICRO_COMPACT_AFTER_TURNS = 1  # N 轮前的工具结果触发微压缩（从3改为1，更积极压缩）
 SUMMARY_MAX_CHARS = 500       # 摘要最大字符数
 
 SUMMARY_PROMPT = """请将以下对话历史压缩为简洁摘要，保留：
@@ -91,9 +92,15 @@ def _make_tool_placeholder(msg: ToolMessage) -> str:
     if "total_files" in data:
         return f"[文件列表已列出: {data.get('total_files', 0)} 个文件, {data.get('total_dirs', 0)} 个目录]"
 
-    # view_file — 保留原内容，不压缩
+    # view_file — 压缩为摘要（保留文件路径和行数信息）
     if "content" in data and "total_lines" in data:
-        return None  # 信号：不替换
+        path = data.get("path", "未知文件")
+        total = data.get("total_lines", 0)
+        showing = data.get("showing_lines", "")
+        content = data.get("content", "")
+        # 计算内容行数
+        content_lines = content.count('\n') + 1 if content else 0
+        return f"[文件已读取: {path}, 共{total}行, 显示{showing}, 内容{content_lines}行已省略]"
 
     # edit_file / write_file / create_file / create_directory
     if "path" in data:
@@ -368,3 +375,76 @@ def snip_compact(
 
     logger.info(f"Snip Compact 完成: {total} 条消息 -> {len(result)} 条")
     return result, summary_text
+
+
+# ── Layer 6: Truncate Large Results（截断大段工具输出）────────────────
+
+# 工具结果最大字符数（超过则截断）
+MAX_TOOL_RESULT_CHARS = 3000
+
+
+def truncate_large_results(messages: list[BaseMessage], max_chars: int = MAX_TOOL_RESULT_CHARS) -> list[BaseMessage]:
+    """Layer 6: 截断大段的工具输出内容。
+
+    对于当前轮次之前的工具结果，如果内容过长则截断为摘要。
+    当前轮次的工具结果保留原内容，确保 AI 能看到最新结果。
+
+    Args:
+        messages: 消息列表
+        max_chars: 工具结果最大字符数
+
+    Returns:
+        处理后的消息列表
+    """
+    if len(messages) < 2:
+        return messages
+
+    # 找到最后一个 HumanMessage 的位置（当前轮次的开始）
+    last_human_idx = -1
+    for i in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[i], HumanMessage):
+            last_human_idx = i
+            break
+
+    if last_human_idx < 0:
+        return messages
+
+    result = []
+    for i, msg in enumerate(messages):
+        # 只处理当前轮次之前的 ToolMessage
+        if i < last_human_idx and isinstance(msg, ToolMessage):
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            # 如果内容过长，截断为摘要
+            if len(content) > max_chars:
+                # 尝试解析 JSON 获取工具类型
+                try:
+                    data = json.loads(content)
+                    if "content" in data and "total_lines" in data:
+                        # view_file 结果
+                        path = data.get("path", "未知文件")
+                        total = data.get("total_lines", 0)
+                        truncated_content = content[:500] + f"\n... [已截断，原长 {len(content)} 字符]"
+                        new_data = {
+                            "success": True,
+                            "path": path,
+                            "total_lines": total,
+                            "content_preview": truncated_content,
+                            "truncated": True,
+                        }
+                        result.append(ToolMessage(
+                            content=json.dumps(new_data, ensure_ascii=False),
+                            tool_call_id=msg.tool_call_id,
+                        ))
+                        continue
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                # 其他类型的结果直接截断
+                truncated = content[:max_chars // 2] + f"\n... [已截断，原长 {len(content)} 字符] ...\n" + content[-max_chars // 2:]
+                result.append(ToolMessage(
+                    content=truncated,
+                    tool_call_id=msg.tool_call_id,
+                ))
+                continue
+        result.append(msg)
+
+    return result

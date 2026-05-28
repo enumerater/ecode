@@ -3,8 +3,8 @@ import re
 from pathlib import Path
 from langchain_core.tools import tool
 
-MAX_MATCHES = 50
-MAX_FILES = 100
+MAX_MATCHES = 30  # 从50降到30，减少token消耗
+MAX_FILES = 50    # 从100降到50，减少token消耗
 
 # 可搜索的文件扩展名
 SEARCHABLE_EXTENSIONS = {
@@ -67,7 +67,11 @@ def search_code(pattern: str, path: str = ".", include_pattern: str = "") -> str
                     for i, line in enumerate(text.splitlines(), 1):
                         if regex.search(line):
                             rel = str(entry.relative_to(root))
-                            matches.append(f"{rel}:{i}: {line.strip()}")
+                            # 截断过长的行，减少token消耗
+                            line_content = line.strip()
+                            if len(line_content) > 200:
+                                line_content = line_content[:200] + "..."
+                            matches.append(f"{rel}:{i}: {line_content}")
                             if len(matches) >= MAX_MATCHES:
                                 return
                 except (PermissionError, OSError):
@@ -75,12 +79,14 @@ def search_code(pattern: str, path: str = ".", include_pattern: str = "") -> str
 
     walk(resolved if resolved.is_dir() else resolved.parent)
 
+    # 返回时限制结果数量，减少token消耗
+    limited_matches = matches[:20]  # 最多返回20个匹配
     return json.dumps({
         "success": True,
         "pattern": pattern,
-        "matches": matches,
+        "matches": limited_matches,
         "total": len(matches),
-        "truncated": len(matches) >= MAX_MATCHES,
+        "truncated": len(matches) >= MAX_MATCHES or len(limited_matches) < len(matches),
     }, ensure_ascii=False)
 
 
@@ -91,7 +97,7 @@ def list_files(path: str = ".", pattern: str = "*", max_depth: int = 2) -> str:
     Args:
         path: 目录路径（相对于项目根目录）
         pattern: glob 模式（如 "*.py", "src/**"）
-        max_depth: 最大递归深度，默认 3
+        max_depth: 最大递归深度，默认 2
     """
     from tools import get_project_root, resolve_safe_path
 
@@ -126,12 +132,16 @@ def list_files(path: str = ".", pattern: str = "*", max_depth: int = 2) -> str:
 
     walk(resolved)
 
+    # 限制返回数量，减少token消耗
+    limited_files = sorted(files)[:30]  # 最多返回30个文件
+    limited_dirs = sorted(dirs)[:20]    # 最多返回20个目录
+
     return json.dumps({
         "success": True,
         "path": str(resolved),
-        "directories": sorted(dirs),
-        "files": sorted(files),
+        "directories": limited_dirs,
+        "files": limited_files,
         "total_dirs": len(dirs),
         "total_files": len(files),
-        "truncated": len(files) >= MAX_FILES,
+        "truncated": len(files) >= MAX_FILES or len(limited_files) < len(files),
     }, ensure_ascii=False)

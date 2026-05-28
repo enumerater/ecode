@@ -12,9 +12,9 @@ from tools.streaming import (
 
 # 命令超时时间（秒）
 COMMAND_TIMEOUT = 60
-# 输出最大长度
-MAX_STDOUT_LENGTH = 10000
-MAX_STDERR_LENGTH = 5000
+# 输出最大长度（减少以节省token）
+MAX_STDOUT_LENGTH = 5000  # 从10000降到5000
+MAX_STDERR_LENGTH = 2000  # 从5000降到2000
 
 # 环境变量：防止子进程 GUI 阻塞 & 确保输出不缓冲
 _SUBPROCESS_ENV = {

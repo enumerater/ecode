@@ -17,7 +17,7 @@ from tools.context_tools import COMPACT_SIGNAL
 from tools.task_plan_tools import TASK_SIGNAL
 from tools.tool_index import build_tool_index
 from tools.tool_executor import execute_tool_batches
-from context_manager import micro_compact, auto_compact, manual_compact, reactive_compact
+from context_manager import micro_compact, auto_compact, manual_compact, reactive_compact, truncate_large_results
 from project_context import load_project_context
 from memory.loader import load_memories
 from permissions.rules import evaluate_permission, Behavior, PermissionRule
@@ -27,7 +27,7 @@ from settings import Settings
 logger = logging.getLogger(__name__)
 
 # 工具结果最大字符数，超过则截断（保留头尾）
-MAX_TOOL_RESULT_CHARS = 8000
+MAX_TOOL_RESULT_CHARS = 4000  # 从8000降到4000，减少token消耗
 
 # 最大重试次数
 MAX_RETRIES = 3
@@ -234,6 +234,9 @@ def think(state: State) -> dict:
 
     # Layer 1: Micro-Compact — 每轮自动，替换旧工具结果为占位符
     messages = micro_compact(messages)
+
+    # Layer 6: Truncate Large Results — 截断大段工具输出（在微压缩之后、自动压缩之前）
+    messages = truncate_large_results(messages)
 
     # Layer 2: Auto-Compact — token 超阈值时调用 LLM 生成摘要
     result = {"messages": []}

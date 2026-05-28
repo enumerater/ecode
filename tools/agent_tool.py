@@ -3,12 +3,23 @@
 import json
 import logging
 from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 logger = logging.getLogger(__name__)
 
 # 子 agent 可用的工具（只读工具）
 SUBAGENT_TOOLS = ["view_file", "search_code", "list_files", "git_status", "git_diff", "git_log"]
+
+# 子 agent 工具结果最大字符数（限制token消耗）
+SUBAGENT_MAX_TOOL_RESULT_CHARS = 2000
+
+
+def _truncate_subagent_result(result: str) -> str:
+    """截断子 agent 工具结果。"""
+    if len(result) > SUBAGENT_MAX_TOOL_RESULT_CHARS:
+        keep = SUBAGENT_MAX_TOOL_RESULT_CHARS // 2
+        return result[:keep] + f"\n... [结果已截断，原长 {len(result)} 字符] ...\n" + result[-keep:]
+    return result
 
 
 @tool
@@ -41,23 +52,21 @@ def run_agent(task: str, context: str = "") -> str:
     # 绑定工具
     sub_llm = llm.bind_tools(subagent_tools)
 
-    # 构建子 agent 的系统提示
-    system_prompt = """你是一个代码分析助手。你的任务是分析代码并提供详细报告。
-你只能使用只读工具（查看文件、搜索代码、Git 查看）。
-不要尝试修改任何文件或执行任何命令。
-完成后，提供一个简洁的总结报告。"""
+    # 构建子 agent 的系统提示（更简洁，减少token消耗）
+    system_prompt = """你是代码分析助手。只使用只读工具分析代码，不要修改文件。
+完成后提供简洁总结（不超过500字）。"""
 
     if context:
-        system_prompt += f"\n\n额外上下文：\n{context}"
+        system_prompt += f"\n\n上下文：{context[:500]}"  # 限制上下文长度
 
-    # 执行子 agent（最多 5 轮工具调用）
+    # 执行子 agent（最多 3 轮工具调用，从5轮减少到3轮）
     messages = [
         SystemMessage(content=system_prompt),
-        HumanMessage(content=task),
+        HumanMessage(content=task[:1000]),  # 限制任务描述长度
     ]
 
     try:
-        for _ in range(5):
+        for _ in range(3):  # 从5轮减少到3轮
             response = sub_llm.invoke(messages)
             messages.append(response)
 
@@ -71,16 +80,20 @@ def run_agent(task: str, context: str = "") -> str:
                 if tool_name in tool_map:
                     try:
                         result = tool_map[tool_name].invoke(tc["args"])
-                        from langchain_core.messages import ToolMessage
-                        messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
+                        # 截断工具结果，减少token消耗
+                        truncated_result = _truncate_subagent_result(result)
+                        messages.append(ToolMessage(content=truncated_result, tool_call_id=tc["id"]))
                     except Exception as e:
-                        from langchain_core.messages import ToolMessage
                         error_msg = json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
                         messages.append(ToolMessage(content=error_msg, tool_call_id=tc["id"]))
 
         # 提取最终回复
         final_response = messages[-1]
         content = final_response.content if hasattr(final_response, 'content') else str(final_response)
+
+        # 限制返回结果长度
+        if len(content) > 2000:
+            content = content[:2000] + "\n... [结果已截断]"
 
         return json.dumps({
             "success": True,
