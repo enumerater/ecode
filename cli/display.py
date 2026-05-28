@@ -304,6 +304,17 @@ def show_help():
         ("/exit", "退出"),
     ]
     lines = [f"  [cyan]{cmd.ljust(12)}[/cyan] {desc}" for cmd, desc in cmds]
+
+    # 显示已加载的 skills
+    from skills.store import skill_store
+    skills = skill_store.list_user_invocable()
+    if skills:
+        lines.append("")
+        lines.append("[bold]Skills[/bold]")
+        for s in skills:
+            hint = f" {s.argument_hint}" if s.argument_hint else ""
+            lines.append(f"  [cyan]/{s.name.ljust(12)}[/cyan] {s.description} [dim]{hint}[/dim]")
+
     console.print(Panel("\n".join(lines), title="可用命令", expand=False))
 
 

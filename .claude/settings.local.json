@@ -20,7 +20,13 @@
       "Bash(twine check *)",
       "Bash(pip index *)",
       "Bash(twine upload *)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Bash(dir E:\\\\work\\\\ecode\\\\cli *)",
+      "Bash(findstr -i skill)",
+      "Bash(dir \"E:\\\\111_claude_source\\\\buildable-fork\\\\src\\\\tools\" /b)",
+      "Bash(findstr /i \"skill\")",
+      "Bash(dir /s /b \"E:\\\\111_claude_source\\\\buildable-fork\\\\src\\\\tools\")",
+      "Bash(findstr /i \"Skill\")"
     ]
   }
 }

@@ -138,6 +138,17 @@ def _build_immutable_context(project_root: str, plan_mode: bool = False) -> str:
     tool_index = build_tool_index(tools_for_index, SAFE_TOOLS, DANGEROUS_TOOLS, TOOL_META)
     sections.append(f"## 可用工具一览\n\n{tool_index}\n\n使用 `get_tool_details` 工具获取某个工具的完整文档。")
 
+    # Skill 列表
+    from skills.store import skill_store
+    skills = skill_store.list_model_invocable()
+    if skills:
+        skill_lines = []
+        for s in skills:
+            hint = f" `{s.argument_hint}`" if s.argument_hint else ""
+            skill_lines.append(f"- /{s.name}{hint}: {s.description}")
+        sections.append("## 可用 Skill\n\n" + "\n".join(skill_lines) +
+                        "\n\n使用 `skill` 工具调用 skill，或让用户通过 `/skill-name` 调用。")
+
     # 工作规则
     sections.append(IMMUTABLE_INSTRUCTIONS)
 

@@ -25,6 +25,8 @@ from .display import (
 )
 from .live_status import QuerySpinner, THINKING, TOOL_USE, RESPONDING
 from tools.streaming import StreamingEvents
+from skills.store import skill_store
+from skills.loader import substitute_args
 
 console = Console(force_terminal=True)
 
@@ -645,7 +647,14 @@ def _check_first_run():
 
 
 def start_chat():
-    set_slash_commands(["help", "init", "sessions", "switch", "new", "delete", "history", "clear", "exit", "mode", "plan", "storage", "compact"])
+    # 加载 skills
+    project_root = __import__("os").getcwd().replace("\\", "/")
+    skill_store.load_all(project_root)
+
+    # 内置命令 + skill 名称
+    builtin_cmds = ["help", "init", "sessions", "switch", "new", "delete", "history", "clear", "exit", "mode", "plan", "storage", "compact"]
+    skill_cmds = [s.name for s in skill_store.list_user_invocable()]
+    set_slash_commands(builtin_cmds + skill_cmds)
 
     _check_first_run()
 
@@ -795,7 +804,46 @@ def start_chat():
                 console.print("再见！")
                 break
             else:
-                console.print(f"[yellow]未知命令: {cmd}，输入 /help 查看可用命令[/yellow]")
+                # 检查是否为 skill 命令
+                skill_name = cmd.lstrip("/")
+                skill = skill_store.get(skill_name)
+                if skill and skill.user_invocable:
+                    # 提取参数（命令名之后的部分）
+                    parts = trimmed.split(None, 1)
+                    args_str = parts[1] if len(parts) > 1 else ""
+                    # 参数替换
+                    content = substitute_args(skill.content, args_str, skill.arguments)
+                    # 注入为 user message
+                    get_session_manager().create_or_update(thread_id, project_root, title=f"[skill] {skill.name}")
+                    config = {"configurable": {"thread_id": thread_id}}
+                    input_data = {
+                        "messages": [HumanMessage(content=content)],
+                        "project_root": project_root,
+                        "permission_mode": permission_mode,
+                        "plan_mode": plan_mode,
+                        "session_approved": session_approved,
+                    }
+                    while True:
+                        interrupt_data = None
+                        gen = _process_stream(input_data, config, thread_id, project_root)
+                        try:
+                            for event in gen:
+                                if event["type"] == "interrupt":
+                                    interrupt_data = event["data"]
+                                elif event["type"] == "done":
+                                    usage = event["usage"]
+                        except KeyboardInterrupt:
+                            supplement = supplement_input()
+                            if supplement:
+                                input_data = {"messages": [HumanMessage(content=supplement)], "project_root": project_root, "permission_mode": permission_mode, "plan_mode": plan_mode, "session_approved": session_approved}
+                                continue
+                            else:
+                                break
+                        if interrupt_data:
+                            _, session_approved = _handle_approval(interrupt_data, config, thread_id, project_root, permission_mode, plan_mode, session_approved)
+                        break
+                else:
+                    console.print(f"[yellow]未知命令: {cmd}，输入 /help 查看可用命令[/yellow]")
             continue
 
         # 正常对话

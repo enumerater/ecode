@@ -12,11 +12,12 @@ from tools.agent_tool import run_agent
 from tools.task_tools import create_background_task, get_task_status, list_background_tasks, kill_background_task
 from tools.task_plan_tools import create_task, update_task, list_tasks
 from tools.ask_user_question_tool import ask_user_question
+from tools.skill_tool import skill
 
 # ── 工具分类集合（向后兼容）──
-SAFE_TOOLS = {"view_file", "search_code", "list_files", "compact", "get_tool_details", "git_status", "git_diff", "git_log", "git_blame", "save_memory", "list_memories", "get_task_status", "list_background_tasks", "create_task", "update_task", "list_tasks"}
+SAFE_TOOLS = {"view_file", "search_code", "list_files", "compact", "get_tool_details", "git_status", "git_diff", "git_log", "git_blame", "save_memory", "list_memories", "get_task_status", "list_background_tasks", "create_task", "update_task", "list_tasks", "skill"}
 DANGEROUS_TOOLS = {"edit_file", "write_file", "create_file", "create_directory", "run_command", "git_commit", "enter_plan_mode", "exit_plan_mode", "run_agent", "create_background_task", "kill_background_task", "ask_user_question"}
-ALL_TOOLS = [view_file, edit_file, write_file, create_file, create_directory, search_code, list_files, run_command, compact, get_tool_details, git_status, git_diff, git_log, git_commit, git_blame, save_memory, list_memories, enter_plan_mode, exit_plan_mode, run_agent, create_background_task, get_task_status, list_background_tasks, kill_background_task, create_task, update_task, list_tasks, ask_user_question]
+ALL_TOOLS = [view_file, edit_file, write_file, create_file, create_directory, search_code, list_files, run_command, compact, get_tool_details, git_status, git_diff, git_log, git_commit, git_blame, save_memory, list_memories, enter_plan_mode, exit_plan_mode, run_agent, create_background_task, get_task_status, list_background_tasks, kill_background_task, create_task, update_task, list_tasks, ask_user_question, skill]
 
 # Plan mode: read-only tools + plan/task/compact/agent tools
 PLAN_MODE_TOOLS = [
@@ -28,6 +29,7 @@ PLAN_MODE_TOOLS = [
     ask_user_question,
     run_agent,
     get_task_status, list_background_tasks,
+    skill,
 ]
 
 # ── 工具并发元数据 ──
@@ -70,6 +72,8 @@ TOOL_META: dict[str, dict] = {
     "list_tasks":      {"is_concurrency_safe": True,  "is_read_only": True,  "is_destructive": False},
     # 用户决策工具
     "ask_user_question": {"is_concurrency_safe": False, "is_read_only": True, "is_destructive": True},
+    # Skill 工具
+    "skill":           {"is_concurrency_safe": True,  "is_read_only": True,  "is_destructive": False},
 }
 
 
