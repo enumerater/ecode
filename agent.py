@@ -10,6 +10,30 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.types import interrupt
 
+
+class ReplaceMessages:
+    """标记：用新消息列表替换 state 中的全部消息（而非追加）。
+
+    用法：节点返回 {"messages": ReplaceMessages(new_list)} 时，
+    reducer 会用 new_list 整体替换 state["messages"]。
+    """
+    __slots__ = ("messages",)
+
+    def __init__(self, messages: list):
+        self.messages = messages
+
+
+def messages_reducer(existing, updates):
+    """自定义 messages reducer：支持追加和整体替换。
+
+    - 当 updates 包含 ReplaceMessages 实例时，用其内容替换整个列表
+    - 否则走标准 add_messages 逻辑（按 ID 追加/更新）
+    """
+    for u in updates:
+        if isinstance(u, ReplaceMessages):
+            return list(u.messages)
+    return add_messages(existing, updates)
+
 # llm 延迟导入，避免未配置时 import 失败
 from session import get_checkpointer
 from tools import ALL_TOOLS, SAFE_TOOLS, DANGEROUS_TOOLS, TOOL_META, set_project_root
@@ -177,7 +201,7 @@ def reset_tool_llm():
 
 
 class State(TypedDict):
-    messages: Annotated[list[BaseMessage], add_messages]
+    messages: Annotated[list[BaseMessage], messages_reducer]
     project_root: str
     last_error: str
     retry_count: int
@@ -248,12 +272,12 @@ def think(state: State) -> dict:
     messages = truncate_large_results(messages)
 
     # Layer 2: Auto-Compact — token 超阈值时调用 LLM 生成摘要
-    result = {"messages": []}
+    result = {}
     messages, summary = auto_compact(messages, llm)
     if summary:
         logger.info(f"Auto-Compact 摘要: {summary[:100]}...")
         result["compact_summary"] = summary
-        result["compact_at"] = original_msg_count
+        result["compact_at"] = len(messages)  # 压缩后的消息数，非原始数
 
     # 首次构建或模式切换时存入 state
     if not state.get("immutable_context") or immutable_ctx_key != current_key:
@@ -307,17 +331,18 @@ def think(state: State) -> dict:
             compacted_messages, compact_summary_text = reactive_compact(messages, llm)
             if compact_summary_text:
                 result["compact_summary"] = compact_summary_text
-                result["compact_at"] = original_msg_count
+                result["compact_at"] = len(compacted_messages)
                 # 重试 LLM 调用
                 full_messages = [SystemMessage(content=immutable_ctx)] + compacted_messages
                 try:
                     response = _get_tool_llm(plan_mode=plan_mode).invoke(full_messages)
                 except Exception as retry_e:
                     logger.error(f"Reactive Compact 重试失败: {retry_e}")
-                    result["messages"] = [AIMessage(content=f"抱歉，上下文过长且压缩后仍无法处理: {retry_e}")]
+                    result["messages"] = ReplaceMessages(compacted_messages + [AIMessage(content=f"抱歉，上下文过长且压缩后仍无法处理: {retry_e}")])
                     return result
             else:
-                result["messages"] = [AIMessage(content=f"抱歉，上下文过长且压缩失败: {e}")]
+                # 无摘要但消息可能已被截断，仍需写回
+                result["messages"] = ReplaceMessages(compacted_messages + [AIMessage(content=f"抱歉，上下文过长且压缩失败: {e}")])
                 return result
         else:
             raise
@@ -332,7 +357,11 @@ def think(state: State) -> dict:
             "total_tokens": usage["total_tokens"] + um.get("total_tokens", 0),
         }
 
-    result["messages"] = [response]
+    # 如果发生了压缩，用压缩后的消息整体替换 state 中的消息（而非追加）
+    if "compact_summary" in result:
+        result["messages"] = ReplaceMessages(messages + [response])
+    else:
+        result["messages"] = [response]
     result["usage"] = usage
     return result
 
@@ -479,10 +508,10 @@ def execute_tools(state: State) -> dict:
         from model import llm
         logger.info("Manual Compact 触发")
         all_messages = state["messages"] + results
-        _, summary = manual_compact(all_messages, llm, compact_instruction)
+        compacted_messages, summary = manual_compact(all_messages, llm, compact_instruction)
         if summary:
             final_update["compact_summary"] = summary
-            final_update["compact_at"] = len(all_messages)
+            final_update["compact_at"] = len(compacted_messages)
             # 替换 compact 工具的结果
             for i, msg in enumerate(results):
                 if hasattr(msg, 'tool_call_id'):
@@ -498,6 +527,8 @@ def execute_tools(state: State) -> dict:
                                 tool_call_id=msg.tool_call_id,
                             )
                             break
+            # 用压缩后的消息整体替换 state 中的消息
+            final_update["messages"] = ReplaceMessages(compacted_messages + results)
 
     return final_update
 

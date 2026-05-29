@@ -59,14 +59,8 @@ def _get_context_usage(graph, config):
         messages = values.get("messages", [])
         if not messages:
             return 0, 0.0
-        # compact_summary 替换旧消息，与 _build_messages 逻辑一致
-        compact_summary = values.get("compact_summary", "")
-        compact_at = values.get("compact_at", 0)
-        if compact_summary and compact_at > 0 and compact_at < len(messages):
-            new_messages = messages[compact_at:]
-            token_count = estimate_tokens([SystemMessage(content=f"[对话历史摘要]\n{compact_summary}")]) + estimate_tokens(new_messages)
-        else:
-            token_count = estimate_tokens(messages)
+        # state 中的消息已包含摘要 SystemMessage（如有），直接估算
+        token_count = estimate_tokens(messages)
         # immutable_context 是实际发给 LLM 的 system prompt 大头
         immutable_ctx = values.get("immutable_context", "")
         if immutable_ctx:
@@ -787,12 +781,14 @@ def start_chat():
                     console.print(f"[dim]当前上下文: {token_count} tokens ({pct:.0f}%)，正在压缩...[/dim]")
                     try:
                         import model as _model
+                        from agent import ReplaceMessages
                         llm = _model.create_llm()
-                        _, summary = manual_compact(messages, llm)
+                        compacted, summary = manual_compact(messages, llm)
                         if summary:
                             get_graph().update_state(config, {
+                                "messages": ReplaceMessages(compacted),
                                 "compact_summary": summary,
-                                "compact_at": len(messages),
+                                "compact_at": len(compacted),
                             })
                             console.print(f"[green]上下文已压缩。摘要:[/green]")
                             console.print(f"  [dim]{summary}[/dim]")

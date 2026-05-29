@@ -48,31 +48,16 @@ def show_context_state(graph, config):
     compact_summary = values.get("compact_summary", "")
 
     ctx_tokens = estimate_tokens([SystemMessage(content=immutable_ctx)]) if immutable_ctx else 0
-    sum_tokens = estimate_tokens([SystemMessage(content=compact_summary)]) if compact_summary else 0
-    compact_at = values.get("compact_at", 0)
 
-    # 与 _build_messages 逻辑一致：compact_summary 替换旧消息
-    if compact_summary and compact_at > 0 and compact_at < len(messages):
-        new_messages = messages[compact_at:]
-        new_msg_tokens = estimate_tokens(new_messages) if new_messages else 0
-        total = ctx_tokens + sum_tokens + new_msg_tokens
-        pct = min(total / MAX_TOKENS * 100, 100)
-        print(f"\n  ┌─ 上下文状态 ─────────────────────────────────")
-        print(f"  │ Messages: {len(messages)} 条 (旧 {compact_at} 条已压缩, 新 {len(new_messages)} 条)")
-        print(f"  │ Immutable: {len(immutable_ctx)} chars  {fmt_token(ctx_tokens)} tokens")
-        print(f"  │ Summary:   {len(compact_summary)} chars  {fmt_token(sum_tokens)} tokens")
-        print(f"  │ 新消息:    {fmt_token(new_msg_tokens)} tokens")
-        print(f"  │ 实际总计:  {fmt_token(total)} / {fmt_token(MAX_TOKENS)}  {bar(pct)}")
-        print(f"  └──────────────────────────────────────────────")
-    else:
-        msg_tokens = estimate_tokens(messages) if messages else 0
-        total = msg_tokens + ctx_tokens
-        pct = min(total / MAX_TOKENS * 100, 100)
-        print(f"\n  ┌─ 上下文状态 ─────────────────────────────────")
-        print(f"  │ Messages: {len(messages)} 条  {fmt_token(msg_tokens)} tokens")
-        print(f"  │ Immutable: {len(immutable_ctx)} chars  {fmt_token(ctx_tokens)} tokens")
-        print(f"  │ 总计: {fmt_token(total)} / {fmt_token(MAX_TOKENS)}  {bar(pct)}")
-        print(f"  └──────────────────────────────────────────────")
+    # state 中的消息已包含摘要 SystemMessage（如有），直接估算
+    msg_tokens = estimate_tokens(messages) if messages else 0
+    total = msg_tokens + ctx_tokens
+    pct = min(total / MAX_TOKENS * 100, 100)
+    print(f"\n  ┌─ 上下文状态 ─────────────────────────────────")
+    print(f"  │ Messages: {len(messages)} 条  {fmt_token(msg_tokens)} tokens")
+    print(f"  │ Immutable: {len(immutable_ctx)} chars  {fmt_token(ctx_tokens)} tokens")
+    print(f"  │ 总计: {fmt_token(total)} / {fmt_token(MAX_TOKENS)}  {bar(pct)}")
+    print(f"  └──────────────────────────────────────────────")
 
 
 def show_state_keys(values):
@@ -285,12 +270,14 @@ def main():
                 try:
                     import model as _model
                     from context_manager import manual_compact
+                    from agent import ReplaceMessages
                     llm = _model.create_llm()
-                    _, summary = manual_compact(messages, llm)
+                    compacted, summary = manual_compact(messages, llm)
                     if summary:
                         graph.update_state(config, {
+                            "messages": ReplaceMessages(compacted),
                             "compact_summary": summary,
-                            "compact_at": len(messages),
+                            "compact_at": len(compacted),
                         })
                         print(f"  压缩完成，摘要: {summary[:200]}")
                     else:

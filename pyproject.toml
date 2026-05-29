@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ecode-agent"
-version = "1.1.1"
+version = "1.1.2"
 description = "🧠 基于 LangGraph 的 AI 编程助手。用自然语言操作项目文件系统——读取、搜索、编辑文件，执行命令，Git 集成，支持 SSE 流式响应和 CLI 终端交互。"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -49,7 +49,10 @@ Issues = "https://github.com/enumerater/ecode/issues"
 ecode = "cli.chat:main"
 
 [tool.setuptools.packages.find]
-include = ["cli*", "tools*", "memory*", "hooks*", "permissions*", "tasks*", "utils*"]
+include = ["cli*", "tools*", "memory*", "hooks*", "permissions*", "tasks*", "utils*", "skills*"]
+
+[tool.setuptools.package-data]
+skills = ["builtin/**/*.md"]
 
 [tool.setuptools]
 py-modules = ["agent", "model", "session", "schemas", "settings", "context_manager", "project_context", "task_store"]
